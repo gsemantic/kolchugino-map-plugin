@@ -227,59 +227,11 @@ class KOLCHUGINO_MAP_Ajax_Handler {
             'excerpt'       => wp_trim_words( get_the_excerpt( $post_id ) ?: get_the_content( $post_id ), 20, '...' ),
         );
     }
-                
-                // Получение миниатюры
-                $thumbnail_url = '';
-                if ( has_post_thumbnail( $post_id ) ) {
-                    $thumbnail_url = get_the_post_thumbnail_url( $post_id, 'medium' );
-                }
-                
-                // Галерея изображений
-                $gallery = array();
-                $gallery_meta = get_post_meta( $post_id, '_map_gallery', true );
-                if ( $gallery_meta && is_array( $gallery_meta ) ) {
-                    foreach ( $gallery_meta as $attachment_id ) {
-                        $gallery[] = wp_get_attachment_image_url( $attachment_id, 'medium' );
-                    }
-                }
-                
-                $objects[] = array(
-                    'id'            => $post_id,
-                    'title'         => get_the_title(),
-                    'description'   => get_the_excerpt(),
-                    'content'       => get_the_content(),
-                    'lat'           => (float) get_post_meta( $post_id, '_map_lat', true ),
-                    'lng'           => (float) get_post_meta( $post_id, '_map_lng', true ),
-                    'zoom'          => (int) ( get_post_meta( $post_id, '_map_zoom', true ) ?: 15 ),
-                    'address'       => get_post_meta( $post_id, '_map_address', true ),
-                    'phone'         => get_post_meta( $post_id, '_map_phone', true ),
-                    'website'       => get_post_meta( $post_id, '_map_website', true ),
-                    'email'         => get_post_meta( $post_id, '_map_email', true ),
-                    'opening_hours' => get_post_meta( $post_id, '_map_opening_hours', true ),
-                    'price'         => get_post_meta( $post_id, '_map_price', true ),
-                    'featured'      => (bool) get_post_meta( $post_id, '_map_featured', true ),
-                    'thumbnail'     => $thumbnail_url,
-                    'gallery'       => $gallery,
-                    'categories'    => $category_slugs,
-                    'permalink'     => get_permalink( $post_id ),
-                    'marker_icon'   => get_post_meta( $post_id, '_map_marker_icon', true ) ?: 'circle',
-                    'marker_color'  => get_post_meta( $post_id, '_map_marker_color', true ) ?: '',
-                    'excerpt'       => wp_trim_words(get_the_excerpt($post_id) ?: get_the_content($post_id), 20, '...'),
-                );
-            }
-            wp_reset_postdata();
-        } else {
-            kolchugino_log()->warning( 'No posts found', array( 'query_args' => $args ) );
-        }
-        
-        kolchugino_log()->info( 'Sending response', array( 'objects_count' => count( $objects ) ) );
-        wp_send_json_success( array( 'objects' => $objects ) );
-    }
 
     /**
-     * Импорт GeoJSON
+     * Обработчик AJAX для получения объектов карты
      */
-    public static function import_geojson() {
+    public static function get_objects() {
         // Логируем начало импорта
         kolchugino_log()->info( 'Starting import process', array(
             'action' => 'import_geojson',
