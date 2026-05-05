@@ -1,0 +1,274 @@
+/**
+ * Стили для карты Кольчугино
+/* =========================================
+   Kolchugino Map Plugin - Core Styles
+   Только рабочее ядро для фронтенда
+   ========================================= */
+
+/* 1. Базовая обёртка */
+.kolchugino-map-wrapper {
+    position: relative;
+    margin: 20px 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    box-sizing: border-box;
+}
+
+/* 2. Панель управления */
+.kolchugino-map-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    align-items: center;
+}
+
+/* 3. Поиск */
+.kolchugino-map-search {
+    display: flex;
+    flex: 1 1 250px;
+    max-width: 400px;
+}
+.kolchugino-search-input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px 0 0 4px;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.kolchugino-search-input:focus {
+    border-color: #0073aa;
+    box-shadow: 0 0 0 1px #0073aa;
+}
+.kolchugino-search-btn {
+    padding: 8px 12px;
+    background: #0073aa;
+    color: #fff;
+    border: 1px solid #0073aa;
+    border-left: none;
+    border-radius: 0 4px 4px 0;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.kolchugino-search-btn:hover { background: #005a87; }
+
+/* 4. Фильтры */
+.kolchugino-map-filters {
+    flex: 2 1 300px;
+}
+.kolchugino-filter-select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+    background: #fff;
+    cursor: pointer;
+}
+
+/* 5. Кнопки действий */
+.kolchugino-map-actions {
+    display: flex;
+    gap: 8px;
+}
+.kolchugino-action-btn {
+    padding: 8px;
+    background: #f0f0f1;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+}
+.kolchugino-action-btn:hover { background: #e5e5e5; }
+
+/* 6. Контейнер карты */
+#kolchugino-map {
+    width: 100%;
+    height: 600px; /* fallback, переопределяется через inline-стиль шорткода */
+    border: 1px solid #ddd;
+    background-color: #f5f5f5;
+    position: relative;
+}
+#kolchugino-map .ol-viewport {
+    background: transparent !important;
+}
+
+/* 7. Легенда */
+.kolchugino-map-legend {
+    padding: 12px;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-top: none;
+    border-radius: 0 0 6px 6px;
+}
+.kolchugino-map-legend h4 {
+    margin: 0 0 8px;
+    font-size: 14px;
+    color: #333;
+}
+#kolchugino-map-legend-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+}
+.legend-icon {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+/* 8. Лоадер */
+.kolchugino-map-loader {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(255,255,255,0.95);
+    padding: 20px;
+    border-radius: 8px;
+    text-align: center;
+    z-index: 1000;
+    display: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.kolchugino-map-loader.active { display: block; }
+.kolchugino-loader-spinner {
+    width: 32px; height: 32px;
+    margin: 0 auto 10px;
+    border: 3px solid #eee;
+    border-top-color: #0073aa;
+    border-radius: 50%;
+    animation: kolchugino-spin 1s linear infinite;
+}
+@keyframes kolchugino-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* 9. Попап (OpenLayers Core) */
+.ol-popup {
+    position: absolute;
+    background: #fff;
+    bottom: 12px; left: -50%;
+    padding: 0;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    min-width: 220px; max-width: 280px;
+    opacity: 0; visibility: hidden;
+    transition: opacity 0.2s, visibility 0.2s;
+    pointer-events: none;
+    z-index: 999;
+}
+/* Показываем попап только когда внутри есть контент */
+.ol-popup:has(.kolchugino-popup) {
+    opacity: 1; visibility: visible; pointer-events: auto;
+}
+#kolchugino-map .ol-popup:after {
+    content: ''; position: absolute; top: 100%; left: 50%;
+    margin-left: -8px; border: 8px solid transparent; border-top-color: #fff;
+}
+.popup-closer {
+    position: absolute; top: 4px; right: 6px;
+    background: none; border: none; font-size: 20px;
+    line-height: 1; cursor: pointer; color: #666; padding: 0;
+}
+.popup-closer:hover { color: #000; }
+
+.kolchugino-popup { padding: 12px; }
+.kolchugino-popup h3 {
+    margin: 0 0 8px;
+    font-size: 15px;
+    color: #0073aa;
+    line-height: 1.3;
+}
+.kolchugino-popup .popup-thumbnail {
+    width: 100%; max-height: 120px; object-fit: cover;
+    border-radius: 4px; margin-bottom: 8px; background: #f5f5f5;
+}
+.kolchugino-popup .popup-excerpt {
+    font-size: 13px; color: #555; line-height: 1.4; margin-bottom: 6px;
+}
+.kolchugino-popup .popup-meta { font-size: 13px; color: #666; }
+.kolchugino-popup .popup-meta div { margin: 2px 0; }
+.kolchugino-popup .popup-actions {
+    margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee;
+}
+.kolchugino-popup .popup-link {
+    display: inline-block; padding: 5px 10px;
+    background: #0073aa; color: #fff; text-decoration: none;
+    border-radius: 3px; font-size: 12px; margin-right: 4px;
+    transition: background 0.15s;
+}
+.kolchugino-popup .popup-link:hover { background: #005a87; }
+
+/* 10. Адаптивность */
+@media (max-width: 768px) {
+    .kolchugino-map-controls { flex-direction: column; }
+    .kolchugino-map-search,
+    .kolchugino-map-filters {
+        max-width: 100%;
+        flex-basis: 100%;
+    }
+    .kolchugino-filter-select { width: 100%; }
+    #kolchugino-map { height: 500px; }
+}
+
+/* 11. Печать */
+@media print {
+    .kolchugino-map-controls,
+    .kolchugino-map-legend,
+    .kolchugino-map-loader { display: none !important; }
+    #kolchugino-map {
+        border: 1px solid #000;
+        height: auto;
+        min-height: 400px;
+    }
+}
+
+/* 12. Линейка масштаба (ScaleLine) - компактный стиль */
+.ol-scale-line {
+    position: absolute;
+    bottom: 8px;           /* Прижата к самому низу */
+    right: 12px;           /* Отступ справа */
+    left: auto;
+    background: rgba(0, 0, 0, 0.6);  /* Полупрозрачный фон */
+    border-radius: 3px;
+    padding: 3px 6px;
+    z-index: 1000;         /* Поверх других элементов */
+}
+
+.ol-scale-line-inner {
+    border: 1px solid #fff !important;
+    border-top: none !important;
+    color: #fff;
+    font-size: 10px;       /* Мелкий шрифт */
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.2;
+    white-space: nowrap;   /* Запрет переноса текста */
+}
+
+/* Адаптив для мобильных */
+@media (max-width: 768px) {
+    .ol-scale-line {
+        bottom: 6px;
+        right: 8px;
+        padding: 2px 5px;
+    }
+    .ol-scale-line-inner {
+        font-size: 9px;
+    }
+}
