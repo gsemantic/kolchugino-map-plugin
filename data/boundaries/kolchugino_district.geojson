@@ -1,0 +1,27 @@
+{
+  "type": "FeatureCollection",
+  "name": "kolchugino_district",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Кольчугинский район",
+        "name_en": "Kolchugino District",
+        "boundary": "administrative",
+        "admin_level": "6"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [41.0, 56.2],
+            [41.5, 56.2],
+            [41.5, 56.5],
+            [41.0, 56.5],
+            [41.0, 56.2]
+          ]
+        ]
+      }
+    }
+  ]
+}
