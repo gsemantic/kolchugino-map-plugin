@@ -1,1 +1,1 @@
-Nothing needs to be added to .gitignore since the changes only include a markdown documentation file (DEV_GUIDELINES.md) which is source content that should be tracked in version control.
+Nothing should be ignored in this case, as only a markdown file (DEV_GUIDELINES.md) was modified and there are no build artifacts, dependencies, or temporary files in the changes.
