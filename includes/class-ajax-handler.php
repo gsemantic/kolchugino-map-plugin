@@ -1,6 +1,12 @@
 <?php
 /**
  * AJAX обработчики для получения данных карты
+ * 
+ * Улучшения:
+ * - Поддержка пагинации и лимитов
+ * - Кэширование результатов
+ * - Безопасный импорт (режим слияния вместо полного удаления)
+ * - Улучшенная валидация и санитизация
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -10,6 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 class KOLCHUGINO_MAP_Ajax_Handler {
 
     private static $initialized = false;
+    private static $query_cache = array();
 
     public static function init() {
         if ( self::$initialized ) {
@@ -19,55 +26,100 @@ class KOLCHUGINO_MAP_Ajax_Handler {
         
         kolchugino_log()->info( 'AJAX handlers registered' );
 
-        // Регистрируем обработчики с более высоким приоритетом
-        add_action( 'wp_ajax_get_map_objects', array( __CLASS__, 'get_map_objects' ), 10 );
-        add_action( 'wp_ajax_nopriv_get_map_objects', array( __CLASS__, 'get_map_objects' ), 10 );
+        // Регистрируем обработчики
+        add_action( 'wp_ajax_get_map_objects', array( __CLASS__, 'get_map_objects' ) );
+        add_action( 'wp_ajax_nopriv_get_map_objects', array( __CLASS__, 'get_map_objects' ) );
 
-        add_action( 'wp_ajax_get_map_categories', array( __CLASS__, 'get_map_categories' ), 10 );
-        add_action( 'wp_ajax_nopriv_get_map_categories', array( __CLASS__, 'get_map_categories' ), 10 );
+        add_action( 'wp_ajax_get_map_categories', array( __CLASS__, 'get_map_categories' ) );
+        add_action( 'wp_ajax_nopriv_get_map_categories', array( __CLASS__, 'get_map_categories' ) );
 
-        add_action( 'wp_ajax_import_geojson', array( __CLASS__, 'import_geojson' ), 10 );
+        add_action( 'wp_ajax_import_geojson', array( __CLASS__, 'import_geojson' ) );
         
         // Обработчик обратного геокодирования
-        add_action( 'wp_ajax_reverse_geocode', array( __CLASS__, 'reverse_geocode' ), 10 );
+        add_action( 'wp_ajax_reverse_geocode', array( __CLASS__, 'reverse_geocode' ) );
         
+        // Обработчик очистки кэша
+        add_action( 'wp_ajax_kolchugino_clear_cache', array( __CLASS__, 'clear_cache' ) );
     }
     
     /**
-     * Получение всех объектов карты
+     * Получение всех объектов карты с поддержкой пагинации
      */
     public static function get_map_objects() {
         // Проверка nonce
         if ( ! isset( $_POST['nonce'] ) || ! wp_verify_nonce( $_POST['nonce'], 'kolchugino_map_nonce' ) ) {
-            kolchugino_log()->error( 'Invalid nonce in get_map_objects' );
-            wp_send_json_error( array( 'message' => 'Invalid nonce' ) );
+            kolchugino_log()->warning( 'Invalid nonce in get_map_objects' );
+            wp_send_json_error( array( 'message' => __( 'Invalid security token', 'kolchugino-map' ) ) );
+            return;
         }
         
+        // Санитизация входных данных
         $category_filter = isset( $_POST['category'] ) ? sanitize_text_field( $_POST['category'] ) : '';
-        kolchugino_log()->info( 'get_map_objects called', array( 'category_filter' => $category_filter ) );
+        $per_page        = isset( $_POST['per_page'] ) ? absint( $_POST['per_page'] ) : 100;
+        $page            = isset( $_POST['page'] ) ? absint( $_POST['page'] ) : 1;
+        $search          = isset( $_POST['search'] ) ? sanitize_text_field( $_POST['search'] ) : '';
+        
+        // Ограничиваем per_page
+        $per_page = min( max( $per_page, 1 ), 500 );
+        
+        // Генерируем ключ кэша
+        $cache_key = md5( json_encode( array(
+            'category' => $category_filter,
+            'per_page' => $per_page,
+            'page' => $page,
+            'search' => $search
+        )));
+        
+        // Проверяем кэш (только для публичных запросов без поиска)
+        if ( empty( $search ) && $page === 1 ) {
+            $cached = get_transient( 'kolchugino_map_objects_' . $cache_key );
+            if ( $cached !== false ) {
+                kolchugino_log()->debug( 'Cache hit for get_map_objects' );
+                wp_send_json_success( $cached );
+                return;
+            }
+        }
+        
+        kolchugino_log()->info( 'get_map_objects called', array(
+            'category_filter' => $category_filter,
+            'per_page' => $per_page,
+            'page' => $page,
+            'search' => $search
+        ));
         
         // Проверка существования пост-типа
-        if (!post_type_exists('map_object')) {
+        if ( ! post_type_exists( 'map_object' ) ) {
             kolchugino_log()->error( 'Post type map_object does not exist' );
-            wp_send_json_error( array( 'message' => 'Post type does not exist' ) );
+            wp_send_json_error( array( 'message' => __( 'Map post type not found', 'kolchugino-map' ) ) );
+            return;
         }
         
         $args = array(
             'post_type'      => 'map_object',
-            'posts_per_page' => -1,
+            'posts_per_page' => $per_page,
+            'paged'          => $page,
             'post_status'    => 'publish',
+            'orderby'        => 'title',
+            'order'          => 'ASC',
             'meta_query'     => array(
                 'relation' => 'AND',
                 array(
                     'key'     => '_map_lat',
                     'compare' => 'EXISTS',
+                    'type'    => 'NUMERIC',
                 ),
                 array(
                     'key'     => '_map_lng',
                     'compare' => 'EXISTS',
+                    'type'    => 'NUMERIC',
                 ),
             ),
         );
+        
+        // Поиск по заголовку и содержимому
+        if ( ! empty( $search ) ) {
+            $args['s'] = $search;
+        }
         
         // Фильтрация по категории только если это не 'all'
         if ( ! empty( $category_filter ) && $category_filter !== 'all' ) {
@@ -80,23 +132,101 @@ class KOLCHUGINO_MAP_Ajax_Handler {
             );
         }
         
+        /**
+         * Фильтр для модификации аргументов запроса
+         */
+        $args = apply_filters( 'kolchugino_map_query_args', $args );
+        
         $query = new WP_Query( $args );
         $objects = array();
-        kolchugino_log()->info( 'Posts found', array( 'count' => $query->found_posts, 'query_args' => $args ) );
+        
+        kolchugino_log()->info( 'Posts found', array( 'count' => $query->found_posts ));
         
         if ( $query->have_posts() ) {
             while ( $query->have_posts() ) {
                 $query->the_post();
                 $post_id = get_the_ID();
                 
-                // Получение категорий
-                $categories = get_the_terms( $post_id, 'map_category' );
-                $category_slugs = array();
-                if ( $categories && ! is_wp_error( $categories ) ) {
-                    foreach ( $categories as $cat ) {
-                        $category_slugs[] = $cat->slug;
-                    }
+                $objects[] = self::prepare_map_object( $post_id );
+            }
+            wp_reset_postdata();
+        }
+        
+        // Формируем ответ с пагинацией
+        $response = array(
+            'objects'      => $objects,
+            'total'        => (int) $query->found_posts,
+            'page'         => $page,
+            'per_page'     => $per_page,
+            'total_pages'  => $query->max_num_pages,
+            'has_next'     => $page < $query->max_num_pages,
+            'has_previous' => $page > 1,
+        );
+        
+        // Кэшируем результат на 5 минут
+        if ( empty( $search ) ) {
+            set_transient( 'kolchugino_map_objects_' . $cache_key, $response, 5 * MINUTE_IN_SECONDS );
+        }
+        
+        kolchugino_log()->info( 'Sending response', array( 'objects_count' => count( $objects ) ));
+        wp_send_json_success( $response );
+    }
+    
+    /**
+     * Подготовка данных объекта карты
+     */
+    private static function prepare_map_object( $post_id ) {
+        // Получение категорий
+        $categories = get_the_terms( $post_id, 'map_category' );
+        $category_slugs = array();
+        if ( $categories && ! is_wp_error( $categories ) ) {
+            foreach ( $categories as $cat ) {
+                $category_slugs[] = $cat->slug;
+            }
+        }
+        
+        // Получение миниатюры
+        $thumbnail_url = '';
+        if ( has_post_thumbnail( $post_id ) ) {
+            $thumbnail_url = get_the_post_thumbnail_url( $post_id, 'medium' );
+        }
+        
+        // Галерея изображений
+        $gallery = array();
+        $gallery_meta = get_post_meta( $post_id, '_map_gallery', true );
+        if ( $gallery_meta && is_array( $gallery_meta ) ) {
+            foreach ( $gallery_meta as $attachment_id ) {
+                $url = wp_get_attachment_image_url( $attachment_id, 'medium' );
+                if ( $url ) {
+                    $gallery[] = $url;
                 }
+            }
+        }
+        
+        return array(
+            'id'            => $post_id,
+            'title'         => get_the_title( $post_id ),
+            'description'   => get_the_excerpt( $post_id ),
+            'content'       => get_the_content( $post_id ),
+            'lat'           => (float) get_post_meta( $post_id, '_map_lat', true ),
+            'lng'           => (float) get_post_meta( $post_id, '_map_lng', true ),
+            'zoom'          => (int) get_post_meta( $post_id, '_map_zoom', true ) ?: 15,
+            'address'       => get_post_meta( $post_id, '_map_address', true ),
+            'phone'         => get_post_meta( $post_id, '_map_phone', true ),
+            'website'       => esc_url_raw( get_post_meta( $post_id, '_map_website', true ) ),
+            'email'         => sanitize_email( get_post_meta( $post_id, '_map_email', true ) ),
+            'opening_hours' => get_post_meta( $post_id, '_map_opening_hours', true ),
+            'price'         => get_post_meta( $post_id, '_map_price', true ),
+            'featured'      => (bool) get_post_meta( $post_id, '_map_featured', true ),
+            'thumbnail'     => $thumbnail_url,
+            'gallery'       => $gallery,
+            'categories'    => $category_slugs,
+            'permalink'     => get_permalink( $post_id ),
+            'marker_icon'   => get_post_meta( $post_id, '_map_marker_icon', true ) ?: 'circle',
+            'marker_color'  => get_post_meta( $post_id, '_map_marker_color', true ) ?: '',
+            'excerpt'       => wp_trim_words( get_the_excerpt( $post_id ) ?: get_the_content( $post_id ), 20, '...' ),
+        );
+    }
                 
                 // Получение миниатюры
                 $thumbnail_url = '';

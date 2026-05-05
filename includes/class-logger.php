@@ -1,6 +1,12 @@
 <?php
 /**
  * Улучшенная система логирования для плагина Кольчугино карта
+ * 
+ * Особенности:
+ * - Настраиваемый уровень логирования через опции WordPress
+ * - Автоматическая ротация логов (10MB лимит)
+ * - Автоочистка старых бэкапов (хранятся 7 дней)
+ * - Поддержка контекста и трассировки исключений
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -21,11 +27,15 @@ class KOLCHUGINO_MAP_Logger {
 
     // Максимальный размер файла лога (10MB)
     const MAX_LOG_SIZE = 10485760;
+    
+    // Хранение бэкапов логов (дней)
+    const LOG_BACKUP_RETENTION_DAYS = 7;
 
     private static $instance = null;
     private $log_enabled = false;
-    private $log_level = self::DEBUG;
+    private $log_level = self::WARNING; // По умолчанию только предупреждения и ошибки
     private $log_file = null;
+    private $max_backups = 5; // Максимум 5 бэкапов
 
     private function __construct() {
         $this->init();
@@ -39,17 +49,37 @@ class KOLCHUGINO_MAP_Logger {
     }
 
     private function init() {
-        // Проверяем, включен ли WP_DEBUG
+        // Проверяем настройки плагина
+        $saved_level = get_option( 'kolchugino_map_log_level', false );
+        
+        // Если WP_DEBUG включен
         if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
             $this->log_enabled = true;
             
-            // Определяем уровень логирования
-            if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+            // Используем сохраненный уровень или определяем по WP_DEBUG_LOG
+            if ( $saved_level && defined( $saved_level ) ) {
+                $this->log_level = constant( $saved_level );
+            } elseif ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
                 $this->log_level = self::INFO;
             }
             
             // Устанавливаем путь к файлу лога
-            $this->log_file = WP_CONTENT_DIR . '/kolchugino-map.log';
+            $upload_dir = wp_upload_dir();
+            $this->log_file = $upload_dir['basedir'] . '/kolchugino-map/kolchugino-map.log';
+            
+            // Создаем директорию если не существует
+            $log_dir = dirname( $this->log_file );
+            if ( ! file_exists( $log_dir ) ) {
+                wp_mkdir_p( $log_dir );
+            }
+            
+            // Планируем очистку старых логов
+            add_action( 'kolchugino_map_cleanup_logs', array( $this, 'cleanup_old_logs' ) );
+            
+            // Проверяем нужно ли запустить очистку
+            if ( ! wp_next_scheduled( 'kolchugino_map_cleanup_logs' ) ) {
+                wp_schedule_event( time(), 'daily', 'kolchugino_map_cleanup_logs' );
+            }
         }
     }
 
@@ -69,27 +99,58 @@ class KOLCHUGINO_MAP_Logger {
             $message
         );
 
-        // Добавляем контекст, если есть
+        // Добавляем контекст, если есть (санитизируем данные)
         if ( ! empty( $context ) ) {
-            $log_entry .= ' ' . json_encode( $context );
+            // Удаляем чувствительные данные из контекста
+            $safe_context = $this->sanitize_context( $context );
+            $log_entry .= ' ' . wp_json_encode( $safe_context );
         }
 
-        // Добавляем информацию о запросе
+        // Добавляем информацию о запросе (только безопасные данные)
         if ( isset( $_SERVER['REQUEST_METHOD'] ) ) {
-            $log_entry .= ' | Method: ' . $_SERVER['REQUEST_METHOD'];
+            $log_entry .= ' | Method: ' . sanitize_text_field( $_SERVER['REQUEST_METHOD'] );
         }
         
         if ( isset( $_SERVER['REQUEST_URI'] ) ) {
-            $log_entry .= ' | URI: ' . $_SERVER['REQUEST_URI'];
+            $log_entry .= ' | URI: ' . esc_url_raw( $_SERVER['REQUEST_URI'] );
+        }
+        
+        // Добавляем ID пользователя (без персональных данных)
+        if ( get_current_user_id() ) {
+            $log_entry .= ' | User ID: ' . get_current_user_id();
         }
 
         // Записываем в файл
         $this->write_to_file( $log_entry );
 
         // Также выводим в системный лог для критических ошибок
-        if ( $level === self::ERROR || $level === self::CRITICAL ) {
+        if ( $level === self::ERROR || $level === self::CRITICAL || $level === self::EMERGENCY ) {
             error_log( '[Kolchugino Map] ' . $message );
         }
+    }
+
+    /**
+     * Санитизация контекста перед логированием
+     */
+    private function sanitize_context( $context ) {
+        $sensitive_keys = array( 'password', 'secret', 'token', 'api_key', 'apikey', 'auth' );
+        
+        foreach ( $context as $key => $value ) {
+            // Проверяем ключ на чувствительность
+            foreach ( $sensitive_keys as $sensitive ) {
+                if ( stripos( $key, $sensitive ) !== false ) {
+                    $context[$key] = '***REDACTED***';
+                    break;
+                }
+            }
+            
+            // Рекурсивная обработка массивов
+            if ( is_array( $value ) ) {
+                $context[$key] = $this->sanitize_context( $value );
+            }
+        }
+        
+        return $context;
     }
 
     /**
@@ -123,7 +184,7 @@ class KOLCHUGINO_MAP_Logger {
             $this->rotate_log();
         }
 
-        // Записываем сообщение
+        // Записываем сообщение с блокировкой
         file_put_contents( $this->log_file, $message . PHP_EOL, FILE_APPEND | LOCK_EX );
     }
 
@@ -137,6 +198,57 @@ class KOLCHUGINO_MAP_Logger {
 
         $backup_file = $this->log_file . '.' . date( 'Y-m-d_H-i-s' ) . '.bak';
         rename( $this->log_file, $backup_file );
+        
+        kolchugino_log()->info( 'Log rotated', array( 'backup_file' => basename( $backup_file ) ) );
+    }
+
+    /**
+     * Очистка старых бэкапов логов
+     */
+    public function cleanup_old_logs() {
+        if ( ! $this->log_file ) {
+            return;
+        }
+        
+        $log_dir = dirname( $this->log_file );
+        $backup_pattern = $log_dir . '/kolchugino-map.*.bak';
+        $backups = glob( $backup_pattern );
+        
+        if ( ! $backups ) {
+            return;
+        }
+        
+        $current_time = time();
+        $retention_seconds = self::LOG_BACKUP_RETENTION_DAYS * DAY_IN_SECONDS;
+        $deleted_count = 0;
+        
+        foreach ( $backups as $backup ) {
+            // Проверяем возраст файла
+            if ( file_exists( $backup ) && ( $current_time - filemtime( $backup ) > $retention_seconds ) ) {
+                unlink( $backup );
+                $deleted_count++;
+            }
+        }
+        
+        // Также ограничиваем количество бэкапов
+        if ( count( $backups ) - $deleted_count > $this->max_backups ) {
+            // Сортируем по времени создания
+            usort( $backups, function( $a, $b ) {
+                return filemtime( $a ) - filemtime( $b );
+            });
+            
+            // Удаляем самые старые
+            $to_delete = count( $backups ) - $this->max_backups;
+            for ( $i = 0; $i < $to_delete; $i++ ) {
+                if ( file_exists( $backups[$i] ) ) {
+                    unlink( $backups[$i] );
+                }
+            }
+        }
+        
+        if ( $deleted_count > 0 ) {
+            kolchugino_log()->info( 'Cleaned up old log backups', array( 'deleted' => $deleted_count ) );
+        }
     }
 
     /**
@@ -191,24 +303,29 @@ class KOLCHUGINO_MAP_Logger {
     }
 
     /**
-     * Логирование SQL запросов
+     * Логирование SQL запросов (только в debug режиме)
      */
     public function log_query( $query, $execution_time = null ) {
+        if ( $this->log_level !== self::DEBUG ) {
+            return;
+        }
+        
         $context = array( 'query' => $query );
         
         if ( $execution_time !== null ) {
-            $context['execution_time'] = $execution_time;
+            $context['execution_time'] = $execution_time . 's';
         }
         
         $this->debug( 'SQL Query', $context );
     }
 
     /**
-     * Очистка логов
+     * Очистка текущего лога
      */
     public function clear_logs() {
         if ( $this->log_file && file_exists( $this->log_file ) ) {
             unlink( $this->log_file );
+            $this->info( 'Log file cleared manually' );
         }
     }
 
@@ -217,17 +334,46 @@ class KOLCHUGINO_MAP_Logger {
      */
     public function get_log_stats() {
         if ( ! $this->log_file || ! file_exists( $this->log_file ) ) {
-            return array( 'size' => 0, 'lines' => 0 );
+            return array( 
+                'size' => 0, 
+                'lines' => 0,
+                'size_formatted' => '0 B',
+                'backups' => 0
+            );
         }
 
         $size = filesize( $this->log_file );
         $lines = count( file( $this->log_file ) );
+        
+        // Считаем бэкапы
+        $log_dir = dirname( $this->log_file );
+        $backups = glob( $log_dir . '/kolchugino-map.*.bak' );
 
         return array(
             'size' => $size,
             'lines' => $lines,
             'size_formatted' => size_format( $size ),
+            'backups' => count( $backups ),
+            'last_modified' => date_i18n( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), filemtime( $this->log_file ) )
         );
+    }
+    
+    /**
+     * Установка уровня логирования
+     */
+    public function set_log_level( $level ) {
+        $valid_levels = array(
+            self::EMERGENCY, self::ALERT, self::CRITICAL, self::ERROR,
+            self::WARNING, self::NOTICE, self::INFO, self::DEBUG
+        );
+        
+        if ( in_array( $level, $valid_levels ) ) {
+            $this->log_level = constant( __CLASS__ . '::' . strtoupper( $level ) );
+            update_option( 'kolchugino_map_log_level', __CLASS__ . '::' . strtoupper( $level ) );
+            return true;
+        }
+        
+        return false;
     }
 }
 
