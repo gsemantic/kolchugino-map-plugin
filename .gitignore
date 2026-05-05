@@ -1,0 +1,6 @@
+.aider.*
+server.log
+*.md
+test-*.html
+test-*.php
+data/test_*.geojson
