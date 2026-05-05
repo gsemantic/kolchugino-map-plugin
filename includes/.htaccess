@@ -1,0 +1,10 @@
+# Protect included PHP files
+<Files "*.php">
+    Order Deny,Allow
+    Deny from all
+</Files>
+
+# Allow only specific files
+<Files "index.php">
+    Allow from all
+</Files>

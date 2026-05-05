@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Тест селектора маркеров</title>
+    <style>
+        /* Стили для селектора маркеров */
+        .marker-selector {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            padding: 15px;
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+
+        .marker-option {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 50px;
+            height: 50px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            background: #fff;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            padding: 8px;
+        }
+
+        .marker-option:hover {
+            border-color: #2271b1;
+            background: #f0f6fc;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+
+        .marker-option svg {
+            width: 24px;
+            height: 24px;
+            fill: currentColor;
+        }
+
+        .marker-option.selected {
+            border: 2px solid #2271b1;
+            background: #f0f6fc;
+            box-shadow: 0 0 0 3px rgba(34, 113, 177, 0.1);
+        }
+
+        .marker-option.selected svg {
+            color: #2271b1;
+        }
+
+        /* Стили для карты */
+        #test-map {
+            width: 100%;
+            height: 400px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+
+        /* Стили для полей */
+        .test-fields {
+            margin: 20px 0;
+            padding: 15px;
+            background: #f9f9f9;
+            border-radius: 4px;
+        }
+
+        .test-fields input {
+            margin: 5px 0;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 100%;
+            max-width: 300px;
+        }
+
+        .test-fields label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <h1>Тест селектора маркеров</h1>
+    
+    <!-- Карта -->
+    <div id="test-map"></div>
+    
+    <!-- Селектор маркеров -->
+    <div>
+        <label>Выберите иконку маркера:</label>
+        <div id="marker-selector" class="marker-selector">
+            <button type="button" class="marker-option" data-icon="circle" data-color="#e74c3c" title="Круг">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <circle cx="12" cy="12" r="10"/>
+                </svg>
+            </button>
+            <button type="button" class="marker-option" data-icon="star" data-color="#f39c12" title="Звезда">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                </svg>
+            </button>
+            <button type="button" class="marker-option" data-icon="pin" data-color="#3498db" title="Штырь">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+                </svg>
+            </button>
+            <button type="button" class="marker-option" data-icon="house" data-color="#27ae60" title="Дом">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>
+                </svg>
+            </button>
+            <button type="button" class="marker-option" data-icon="shop" data-color="#9b59b6" title="Магазин">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M19 7h-3V6a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v1H5a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1h1v7a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3V10h1a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1zM9 6h6v1H9V6zm10 11a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V10h2v1a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V10h2v7z"/>
+                </svg>
+            </button>
+            <button type="button" class="marker-option" data-icon="cafe" data-color="#8B4513" title="Кафе">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M20 8h-2.81c.43-.78.81-1.62.81-2.5 0-1.38-1.12-2.5-2.5-2.5-1.93 0-3.5 1.57-3.5 3.5 0 .88.38 1.72.81 2.5H8.19c.43-.78.81-1.62.81-2.5 0-1.38-1.12-2.5-2.5-2.5S4 4.12 4 5.5c0 .88.38 1.72.81 2.5H2v10h20V8zm-7-2.5c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5-.67 1.5-1.5 1.5S13 6.33 13 5.5zM5 5.5c0-.83.67-1.5 1.5-1.5S8 4.67 8 5.5 7.33 7 6.5 7 5 6.33 5 5.5zm13 10.5H6v-5h12v5z"/>
+                </svg>
+            </button>
+            <button type="button" class="marker-option" data-icon="pharmacy" data-color="#E74C3C" title="Аптека">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/>
+                    <path d="M12 11h2v2h-2zm0-4h2v2h-2z" fill="white"/>
+                </svg>
+            </button>
+            <button type="button" class="marker-option" data-icon="transport" data-color="#2C3E50" title="Транспорт">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.5-4.5h11L19 11H5z"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+    
+    <!-- Поля для тестирования -->
+    <div class="test-fields">
+        <label for="_map_marker_icon">Иконка маркера:</label>
+        <input type="text" id="_map_marker_icon" value="" readonly />
+        
+        <label for="_map_marker_color">Цвет маркера:</label>
+        <input type="text" id="_map_marker_color" value="" readonly />
+    </div>
+
+    <!-- Подключение OpenLayers -->
+    <script src="https://cdn.jsdelivr.net/npm/ol@v7.3.0/dist/ol.js"></script>
+    <script>
+        // Глобальные переменные
+        var testMap = null;
+        var marker = null;
+        var vectorSource = null;
+        
+        // Функция инициализации карты
+        function initTestMap() {
+            testMap = new ol.Map({
+                target: 'test-map',
+                layers: [
+                    new ol.layer.Tile({
+                        source: new ol.source.OSM()
+                    }),
+                    new ol.layer.Vector({
+                        source: vectorSource = new ol.source.Vector(),
+                        style: function(feature) {
+                            const icon = feature.get('icon') || 'circle';
+                            const color = feature.get('color') || '#e74c3c';
+                            
+                            return new ol.style.Style({
+                                image: new ol.style.Icon({
+                                    src: createIconSVG(icon, color),
+                                    scale: 1.2,
+                                    anchor: [0.5, 1],
+                                    anchorXUnits: 'fraction',
+                                    anchorYUnits: 'fraction'
+                                })
+                            });
+                        }
+                    })
+                ],
+                view: new ol.View({
+                    center: ol.proj.fromLonLat([39.375751, 56.294425]),
+                    zoom: 13
+                })
+            });
+            
+            // Добавляем начальный маркер
+            addTestMarker(56.294425, 39.375751);
+        }
+        
+        // Функция создания SVG иконки
+        function createIconSVG(iconType, color) {
+            const svgMap = {
+                circle: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"><circle cx="12" cy="12" r="10" fill="${color}"/></svg>`,
+                star: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" fill="${color}"/></svg>`,
+                pin: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" fill="${color}"/></svg>`,
+                house: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" fill="${color}"/></svg>`,
+                shop: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"><path d="M19 7h-3V6a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v1H5a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1h1v7a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3V10h1a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1zM9 6h6v1H9V6zm10 11a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V10h2v1a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V10h2v7z" fill="${color}"/></svg>`,
+                pharmacy: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z" fill="${color}"/><path d="M12 11h2v2h-2zm0-4h2v2h-2z" fill="white"/></svg>`,
+                cafe: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"><path d="M20 8h-2.81c.43-.78.81-1.62.81-2.5 0-1.38-1.12-2.5-2.5-2.5-1.93 0-3.5 1.57-3.5 3.5 0 .88.38 1.72.81 2.5H8.19c.43-.78.81-1.62.81-2.5 0-1.38-1.12-2.5-2.5-2.5S4 4.12 4 5.5c0 .88.38 1.72.81 2.5H2v10h20V8zm-7-2.5c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5-.67 1.5-1.5 1.5S13 6.33 13 5.5zM5 5.5c0-.83.67-1.5 1.5-1.5S8 4.67 8 5.5 7.33 7 6.5 7 5 6.33 5 5.5zm13 10.5H6v-5h12v5z" fill="${color}"/></svg>`,
+                transport: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.5-4.5h11L19 11H5z" fill="${color}"/></svg>`
+            };
+            
+            return `data:image/svg+xml;base64,${btoa(svgMap[iconType] || svgMap.circle)}`;
+        }
+        
+        // Функция добавления маркера
+        function addTestMarker(lat, lng) {
+            const coords = ol.proj.fromLonLat([lng, lat]);
+            if (marker) {
+                vectorSource.removeFeature(marker);
+            }
+            
+            marker = new ol.Feature({
+                geometry: new ol.geom.Point(coords),
+                icon: document.getElementById('_map_marker_icon')?.value || 'circle',
+                color: document.getElementById('_map_marker_color')?.value || '#e74c3c'
+            });
+            
+            vectorSource.addFeature(marker);
+            testMap.getView().animate({
+                center: coords,
+                zoom: 15
+            });
+        }
+        
+        // Функция обновления стиля маркера
+        function updateTestMarkerStyle(icon, color) {
+            if (!marker) return;
+            
+            const iconStyle = new ol.style.Icon({
+                src: createIconSVG(icon, color),
+                scale: 1.2,
+                anchor: [0.5, 1],
+                anchorXUnits: 'fraction',
+                anchorYUnits: 'fraction'
+            });
+            
+            const newStyle = new ol.style.Style({
+                image: iconStyle
+            });
+            
+            marker.setStyle(newStyle);
+        }
+        
+        // Функция инициализации селектора маркеров
+        function initMarkerSelector() {
+            const markerOptions = document.querySelectorAll('.marker-option');
+            const iconInput = document.getElementById('_map_marker_icon');
+            const colorInput = document.getElementById('_map_marker_color');
+            
+            // Обработчик кликов по иконкам
+            markerOptions.forEach(option => {
+                option.addEventListener('click', function() {
+                    // Удаляем класс selected у всех опций
+                    markerOptions.forEach(opt => opt.classList.remove('selected'));
+                    
+                    // Добавляем класс selected к текущей опции
+                    this.classList.add('selected');
+                    
+                    // Обновляем скрытые поля
+                    const icon = this.dataset.icon;
+                    const color = this.dataset.color;
+                    
+                    if (iconInput) iconInput.value = icon;
+                    if (colorInput) colorInput.value = color;
+                    
+                    // Обновляем стиль маркера на карте
+                    updateTestMarkerStyle(icon, color);
+                });
+            });
+        }
+        
+        // Инициализация при загрузке страницы
+        window.addEventListener('load', function() {
+            initTestMap();
+            initMarkerSelector();
+        });
+    </script>
+</body>
+</html>
