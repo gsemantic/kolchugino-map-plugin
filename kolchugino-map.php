@@ -3,7 +3,7 @@
  * Plugin Name: Кольчугино — Туристическая карта
  * Plugin URI:  https://kolchugino-map.local
  * Description: Интерактивная туристическая карта Кольчугинского района с достопримечательностями, кафе, магазинами и гостиницами.
- * Version:     1.4.18
+ * Version:     1.4.19
  * Author:      Your Name
  * License:     GPL v2 or later
  * Text Domain: kolchugino-map
@@ -20,7 +20,7 @@ if ( ! defined( 'KOLCHUGINO_MAP_INITIALIZED' ) ) {
     define( 'KOLCHUGINO_MAP_INITIALIZED', true );
 
     // Константы плагина
-    define( 'KOLCHUGINO_MAP_VERSION', '1.4.18' );
+    define( 'KOLCHUGINO_MAP_VERSION', '1.4.19' );
     define( 'KOLCHUGINO_MAP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
     define( 'KOLCHUGINO_MAP_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
     define( 'KOLCHUGINO_MAP_CENTER_LAT', 56.294425 );
@@ -39,15 +39,13 @@ if ( ! defined( 'KOLCHUGINO_MAP_INITIALIZED' ) ) {
 
     // Инициализация
     function kolchugino_map_init() {
-        // Дополнительная проверка для защиты от кэша
-        if ( defined( 'KOLCHUGINO_MAP_ALREADY_INITIALIZED' ) ) {
-            return;
-        }
-        define( 'KOLCHUGINO_MAP_ALREADY_INITIALIZED', true );
-        
         load_plugin_textdomain( 'kolchugino-map', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' );
 
-        // Инициализация классов
+        // Инициализация классов (единожды)
+        new KOLCHUGINO_MAP_Post_Type();
+        new KOLCHUGINO_MAP_Taxonomy();
+        new KOLCHUGINO_MAP_MetaBox();
+        new KOLCHUGINO_MAP_Shortcode();
         KOLCHUGINO_MAP_Ajax_Handler::init();
         KOLCHUGINO_MAP_Export::init();
         KOLCHUGINO_MAP_Settings::init();
@@ -58,27 +56,32 @@ if ( ! defined( 'KOLCHUGINO_MAP_INITIALIZED' ) ) {
             'file_path' => __FILE__
         ) );
     }
-    add_action( 'plugins_loaded', 'kolchugino_map_init', 1 ); // высокий приоритет
+    add_action( 'plugins_loaded', 'kolchugino_map_init', 1 );
 
     // Активация плагина
     function kolchugino_map_activate() {
-        // Регистрация пост-типов и таксономий при активации
-        KOLCHUGINO_MAP_Post_Type::register();
-        KOLCHUGINO_MAP_Taxonomy::register();
-        KOLCHUGINO_MAP_MetaBox::init();
-        KOLCHUGINO_MAP_Shortcode::init();
-        KOLCHUGINO_MAP_Ajax_Handler::init();
-        KOLCHUGINO_MAP_Export::init();
-
+        flush_rewrite_rules();
+        
         // Логируем активацию
-        kolchugino_log()->info( 'Plugin activated' );
+        kolchugino_log()->notice( 'Plugin activated', array( 'version' => KOLCHUGINO_MAP_VERSION ) );
     }
     register_activation_hook( __FILE__, 'kolchugino_map_activate' );
 
     // Деактивация плагина
     function kolchugino_map_deactivate() {
+        flush_rewrite_rules();
+        
         // Логируем деактивацию
-        kolchugino_log()->info( 'Plugin deactivated' );
+        kolchugino_log()->notice( 'Plugin deactivated' );
     }
     register_deactivation_hook( __FILE__, 'kolchugino_map_deactivate' );
+    
+    // Очистка при удалении
+    function kolchugino_map_uninstall() {
+        kolchugino_log()->warning( 'Plugin uninstalled - cleaning up logs' );
+        // Очистка опций при необходимости
+        delete_option( 'kolchugino_map_settings' );
+        delete_option( 'kolchugino_map_log_level' );
+    }
+    register_uninstall_hook( __FILE__, 'kolchugino_map_uninstall' );
 }
