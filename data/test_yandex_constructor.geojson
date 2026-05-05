@@ -1,0 +1,1 @@
+{"type":"FeatureCollection","metadata":{"name":"test","creator":"Yandex Map Constructor","description":"test_mup"},"features":[{"type":"Feature","id":0,"geometry":{"coordinates":[39.35133303952004,56.30230047100553],"type":"Point"},"properties":{"description":"Проверка добавления","iconCaption":"test_object","marker-color":"#1e98ff"}}]}

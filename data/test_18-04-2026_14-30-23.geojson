@@ -1,0 +1,43 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [39.375751, 56.294425]
+      },
+      "properties": {
+        "title": "Тестовый объект",
+        "description": "Это тестовый объект для проверки импорта",
+        "address": "г. Кольчугино, ул. Тестовая, 1",
+        "phone": "+7 (492) 123-45-67",
+        "website": "https://test.example.com",
+        "email": "test@example.com",
+        "opening_hours": "Пн-Пт: 9:00-18:00",
+        "price": "Бесплатно",
+        "category": "attraction",
+        "marker_color": "#e74c3c"
+      }
+    },
+    {
+      "type": "Feature", 
+      "geometry": {
+        "type": "Point",
+        "coordinates": [39.380000, 56.295000]
+      },
+      "properties": {
+        "title": "Кафе Тестовое",
+        "description": "Тестовое кафе",
+        "address": "г. Кольчугино, ул. Кафейная, 2",
+        "phone": "+7 (492) 123-45-68",
+        "website": "https://cafe.example.com",
+        "email": "cafe@example.com",
+        "opening_hours": "Ежедневно: 8:00-22:00",
+        "price": "Средний чек: 500 руб",
+        "category": "cafe",
+        "marker_color": "#f39c12"
+      }
+    }
+  ]
+}

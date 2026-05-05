@@ -1,0 +1,84 @@
+<?php
+/**
+ * Plugin Name: Кольчугино — Туристическая карта
+ * Plugin URI:  https://kolchugino-map.local
+ * Description: Интерактивная туристическая карта Кольчугинского района с достопримечательностями, кафе, магазинами и гостиницами.
+ * Version:     1.4.18
+ * Author:      Your Name
+ * License:     GPL v2 or later
+ * Text Domain: kolchugino-map
+ * Domain Path: /languages
+ */
+
+// Защита от прямого доступа
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
+}
+
+// Защита от повторной инициализации
+if ( ! defined( 'KOLCHUGINO_MAP_INITIALIZED' ) ) {
+    define( 'KOLCHUGINO_MAP_INITIALIZED', true );
+
+    // Константы плагина
+    define( 'KOLCHUGINO_MAP_VERSION', '1.4.18' );
+    define( 'KOLCHUGINO_MAP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
+    define( 'KOLCHUGINO_MAP_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
+    define( 'KOLCHUGINO_MAP_CENTER_LAT', 56.294425 );
+    define( 'KOLCHUGINO_MAP_CENTER_LNG', 39.375751 );
+    define( 'KOLCHUGINO_MAP_DEFAULT_ZOOM', 13 );
+
+    // Включение required files
+    require_once KOLCHUGINO_MAP_PLUGIN_DIR . 'includes/class-logger.php';
+    require_once KOLCHUGINO_MAP_PLUGIN_DIR . 'includes/class-post-type.php';
+    require_once KOLCHUGINO_MAP_PLUGIN_DIR . 'includes/class-taxonomy.php';
+    require_once KOLCHUGINO_MAP_PLUGIN_DIR . 'includes/class-metabox.php';
+    require_once KOLCHUGINO_MAP_PLUGIN_DIR . 'includes/class-ajax-handler.php';
+    require_once KOLCHUGINO_MAP_PLUGIN_DIR . 'includes/class-shortcode.php';
+    require_once KOLCHUGINO_MAP_PLUGIN_DIR . 'includes/class-export.php';
+    require_once KOLCHUGINO_MAP_PLUGIN_DIR . 'includes/class-settings.php';
+
+    // Инициализация
+    function kolchugino_map_init() {
+        // Дополнительная проверка для защиты от кэша
+        if ( defined( 'KOLCHUGINO_MAP_ALREADY_INITIALIZED' ) ) {
+            return;
+        }
+        define( 'KOLCHUGINO_MAP_ALREADY_INITIALIZED', true );
+        
+        load_plugin_textdomain( 'kolchugino-map', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' );
+
+        // Инициализация классов
+        KOLCHUGINO_MAP_Ajax_Handler::init();
+        KOLCHUGINO_MAP_Export::init();
+        KOLCHUGINO_MAP_Settings::init();
+
+        // Логируем версию плагина
+        kolchugino_log()->info( 'Plugin initialized', array(
+            'version' => KOLCHUGINO_MAP_VERSION,
+            'file_path' => __FILE__
+        ) );
+    }
+    add_action( 'plugins_loaded', 'kolchugino_map_init', 1 ); // высокий приоритет
+
+    // Активация плагина
+    function kolchugino_map_activate() {
+        // Регистрация пост-типов и таксономий при активации
+        KOLCHUGINO_MAP_Post_Type::register();
+        KOLCHUGINO_MAP_Taxonomy::register();
+        KOLCHUGINO_MAP_MetaBox::init();
+        KOLCHUGINO_MAP_Shortcode::init();
+        KOLCHUGINO_MAP_Ajax_Handler::init();
+        KOLCHUGINO_MAP_Export::init();
+
+        // Логируем активацию
+        kolchugino_log()->info( 'Plugin activated' );
+    }
+    register_activation_hook( __FILE__, 'kolchugino_map_activate' );
+
+    // Деактивация плагина
+    function kolchugino_map_deactivate() {
+        // Логируем деактивацию
+        kolchugino_log()->info( 'Plugin deactivated' );
+    }
+    register_deactivation_hook( __FILE__, 'kolchugino_map_deactivate' );
+}
