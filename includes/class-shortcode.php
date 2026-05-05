@@ -20,10 +20,17 @@ class KOLCHUGINO_MAP_Shortcode {
 			wp_enqueue_style( 'openlayers-css', KOLCHUGINO_MAP_PLUGIN_URL . 'assets/vendor/openlayers/ol.css', array(), '10.3.1' );
 			// Подключаем OpenLayers JS
 			wp_enqueue_script( 'openlayers-js', KOLCHUGINO_MAP_PLUGIN_URL . 'assets/vendor/openlayers/ol.js', array(), '10.3.1', true );
-			// Подключаем наш основной JS карты
+			
+			// Определяем, какой JS подключать: map-offline.js или map.js
+			$offline_tiles_url = KOLCHUGINO_MAP_Settings::get_offline_tiles_url();
+			$use_offline = !empty( $offline_tiles_url );
+			
+			$js_file = $use_offline ? 'map-offline.js' : 'map.js';
+			
+			// Подключаем соответствующий JS карты
 			wp_enqueue_script(
 				'kolchugino-map-js',
-				KOLCHUGINO_MAP_PLUGIN_URL . 'assets/js/map.js',
+				KOLCHUGINO_MAP_PLUGIN_URL . 'assets/js/' . $js_file,
 				array( 'jquery', 'openlayers-js' ),
 				KOLCHUGINO_MAP_VERSION,
 				true
@@ -33,16 +40,22 @@ class KOLCHUGINO_MAP_Shortcode {
 				'kolchugino-map-js',
 				'kolchuginoMapData',
 				array(
-					'ajaxUrl'   => admin_url( 'admin-ajax.php' ),
-					'nonce'     => wp_create_nonce( 'kolchugino_map_nonce' ),
-					'centerLat' => KOLCHUGINO_MAP_Settings::get_center()['lat'],
-					'centerLng' => KOLCHUGINO_MAP_Settings::get_center()['lng'],
+					'ajaxUrl'     => admin_url( 'admin-ajax.php' ),
+					'nonce'       => wp_create_nonce( 'kolchugino_map_nonce' ),
+					'centerLat'   => KOLCHUGINO_MAP_Settings::get_center()['lat'],
+					'centerLng'   => KOLCHUGINO_MAP_Settings::get_center()['lng'],
 					'defaultZoom' => KOLCHUGINO_MAP_Settings::get_default_zoom(),
-					'i18n'      => array(
-						'error'     => __( 'Произошла ошибка при загрузке карты', 'kolchugino-map' ),
-						'noResults' => __( 'Объекты не найдены', 'kolchugino-map' ),
+					'tilesUrl'    => $offline_tiles_url,
+					'minZoom'     => KOLCHUGINO_MAP_Settings::get_offline_min_zoom(),
+					'maxZoom'     => KOLCHUGINO_MAP_Settings::get_offline_max_zoom(),
+					'i18n'        => array(
+						'error'      => __( 'Произошла ошибка при загрузке карты', 'kolchugino-map' ),
+						'noResults'  => __( 'Объекты не найдены', 'kolchugino-map' ),
+						'offlineOn'  => __( 'Оффлайн режим включен', 'kolchugino-map' ),
+						'offlineOff' => __( 'Оффлайн режим выключен', 'kolchugino-map' ),
+						'noTiles'    => __( 'Тайлы оффлайн-режима не настроены', 'kolchugino-map' ),
 					),
-					'version'   => KOLCHUGINO_MAP_VERSION
+					'version'     => KOLCHUGINO_MAP_VERSION
 				)
 			);
 			// Подключаем стили карты
