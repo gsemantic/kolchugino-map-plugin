@@ -50,7 +50,7 @@
                 center: ol.proj.fromLonLat([kolchuginoMapData.centerLng, kolchuginoMapData.centerLat]),
                 zoom: kolchuginoMapData.defaultZoom
             }),
-            controls: ol.control.defaults.defaults().extend([
+            controls: ol.control.defaults.defaults({ attribution: false, rotate: false }).extend([
                 new ol.control.ScaleLine({
                     units: 'metric',
                     bar: false,           // Простая линейка в одну строку
