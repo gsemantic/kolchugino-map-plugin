@@ -50,6 +50,33 @@ class KOLCHUGINO_MAP_Settings {
 				'default'           => 39.375751
 			)
 		);
+		register_setting(
+			'kolchugino_map_settings_group',
+			'kolchugino_map_offline_tiles_url',
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => 'esc_url_raw',
+				'default'           => ''
+			)
+		);
+		register_setting(
+			'kolchugino_map_settings_group',
+			'kolchugino_map_offline_min_zoom',
+			array(
+				'type'              => 'integer',
+				'sanitize_callback' => 'absint',
+				'default'           => 10
+			)
+		);
+		register_setting(
+			'kolchugino_map_settings_group',
+			'kolchugino_map_offline_max_zoom',
+			array(
+				'type'              => 'integer',
+				'sanitize_callback' => 'absint',
+				'default'           => 14
+			)
+		);
 	}
 
 	public static function get_default_zoom() {
@@ -73,6 +100,24 @@ class KOLCHUGINO_MAP_Settings {
 		);
 		kolchugino_log()->info( 'Retrieved center', array( 'center' => $center ) );
 		return $center;
+	}
+
+	public static function get_offline_tiles_url() {
+		$url = get_option( 'kolchugino_map_offline_tiles_url', '' );
+		kolchugino_log()->info( 'Retrieved offline tiles URL', array( 'url' => $url ) );
+		return $url;
+	}
+
+	public static function get_offline_min_zoom() {
+		$zoom = get_option( 'kolchugino_map_offline_min_zoom', 10 );
+		kolchugino_log()->info( 'Retrieved offline min zoom', array( 'value' => (int)$zoom ) );
+		return (int) $zoom;
+	}
+
+	public static function get_offline_max_zoom() {
+		$zoom = get_option( 'kolchugino_map_offline_max_zoom', 14 );
+		kolchugino_log()->info( 'Retrieved offline max zoom', array( 'value' => (int)$zoom ) );
+		return (int) $zoom;
 	}
 
 	public static function render_settings_page() {
@@ -117,9 +162,77 @@ class KOLCHUGINO_MAP_Settings {
 								class="regular-text" />
 						</td>
 					</tr>
+					<tr>
+						<th scope="row" colspan="2">
+							<h2 style="margin-top: 20px;"><?php _e( 'Настройки оффлайн-режима', 'kolchugino-map' ); ?></h2>
+						</th>
+					</tr>
+					<tr>
+						<th scope="row">
+							<label for="kolchugino_map_offline_tiles_url"><?php _e( 'URL оффлайн-тайлов', 'kolchugino-map' ); ?></label>
+						</th>
+						<td>
+							<input type="url"
+								id="kolchugino_map_offline_tiles_url"
+								name="kolchugino_map_offline_tiles_url"
+								value="<?php echo esc_attr( self::get_offline_tiles_url() ); ?>"
+								class="regular-text"
+								placeholder="https://username.github.io/repo/offline-tiles/" />
+							<p class="description">
+								<?php _e( 'URL для загрузки тайлов в оффлайн-режиме. Оставьте пустым для использования OSM.', 'kolchugino-map' ); ?>
+								<br />
+								<strong><?php _e( 'Пример:', 'kolchugino-map' ); ?></strong> 
+								<code>https://yourusername.github.io/kolchugino-map/offline-tiles/</code>
+							</p>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row">
+							<label for="kolchugino_map_offline_min_zoom"><?php _e( 'Минимальный зум', 'kolchugino-map' ); ?></label>
+						</th>
+						<td>
+							<input type="number"
+								id="kolchugino_map_offline_min_zoom"
+								name="kolchugino_map_offline_min_zoom"
+								value="<?php echo esc_attr( self::get_offline_min_zoom() ); ?>"
+								step="1"
+								min="1"
+								max="18" />
+							<p class="description">
+								<?php _e( 'Минимальный уровень масштабирования для оффлайн-тайлов (рекомендуется 10).', 'kolchugino-map' ); ?>
+							</p>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row">
+							<label for="kolchugino_map_offline_max_zoom"><?php _e( 'Максимальный зум', 'kolchugino-map' ); ?></label>
+						</th>
+						<td>
+							<input type="number"
+								id="kolchugino_map_offline_max_zoom"
+								name="kolchugino_map_offline_max_zoom"
+								value="<?php echo esc_attr( self::get_offline_max_zoom() ); ?>"
+								step="1"
+								min="1"
+								max="19" />
+							<p class="description">
+								<?php _e( 'Максимальный уровень масштабирования для оффлайн-тайлов (рекомендуется 14).', 'kolchugino-map' ); ?>
+							</p>
+						</td>
+					</tr>
 				</table>
 				<?php submit_button(); ?>
 			</form>
+			
+			<div style="margin-top: 30px; padding: 20px; background: #f0f0f1; border-left: 4px solid #0073aa;">
+				<h3><?php _e( 'Как сгенерировать тайлы', 'kolchugino-map' ); ?></h3>
+				<ol>
+					<li><?php _e( 'Перейдите во вкладку Actions на GitHub', 'kolchugino-map' ); ?></li>
+					<li><?php _e( 'Выберите workflow "Generate Offline Map Tiles"', 'kolchugino-map' ); ?></li>
+					<li><?php _e( 'Нажмите "Run workflow" и укажите параметры зума', 'kolchugino-map' ); ?></li>
+					<li><?php _e( 'После генерации скопируйте URL из артефактов в поле выше', 'kolchugino-map' ); ?></li>
+				</ol>
+			</div>
 		</div>
 		<?php
 	}
