@@ -48,4 +48,124 @@ jobs:
         run: |
           echo "Downloading OSM data for Vladimir Region via Overpass API..."
           
-          # Bounding box for Vladimir Oblast (
+          # Create Overpass query file
+          cat > overpass-query.ql << 'QUERYEOF'
+          [out:xml][timeout:300];
+          (
+            way["highway"](55.5,38.0,56.8,42.5);
+            node["place"](55.5,38.0,56.8,42.5);
+            way["building"](55.5,38.0,56.8,42.5);
+            relation["boundary"="administrative"]["admin_level"="4"]["name"="Владимирская область"];
+          );
+          out body;
+          >;
+          out skel qt;
+          QUERYEOF
+          
+          echo "Querying Overpass API..."
+          curl -s -X POST \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            --data-urlencode "data@overpass-query.ql" \
+            -o region.osm \
+            "https://overpass-api.de/api/interpreter"
+          
+          if [ ! -f region.osm ] || [ ! -s region.osm ]; then
+            echo "::error::Overpass API returned empty response"
+            exit 1
+          fi
+          
+          echo "Response size: $(du -h region.osm | cut -f1)"
+          
+          # Convert XML to PBF
+          echo "Converting OSM XML to PBF..."
+          osmium cat region.osm -o region.osm.pbf
+          
+          echo "PBF size: $(du -h region.osm.pbf | cut -f1)"
+          echo "Done downloading."
+
+      - name: Extract District Boundary
+        id: extract_boundary
+        run: |
+          DISTRICT_NAME="${{ github.event.inputs.district_name || 'Кольчугинский район' }}"
+          echo "Searching for boundary: $DISTRICT_NAME"
+          
+          osmium tags-filter -o boundary.osm.pbf region.osm.pbf \
+            r/boundary=administrative \
+            --overwrite
+          
+          if [ ! -f boundary.osm.pbf ] || [ ! -s boundary.osm.pbf ]; then
+            echo "No specific boundary found. Using full region..."
+            cp region.osm.pbf boundary.osm.pbf
+          fi
+          
+          echo "Boundary file size: $(du -h boundary.osm.pbf | cut -f1)"
+
+      - name: Convert Boundary to GeoJSON
+        run: |
+          if [ -f boundary.osm.pbf ] && [ -s boundary.osm.pbf ]; then
+            osmium export boundary.osm.pbf -o boundary.geojson -f geojson
+            echo "Boundary converted."
+          else
+            echo "::error::No boundary data found."
+            exit 1
+          fi
+
+      - name: Filter OSM Data
+        run: |
+          echo "Filtering OSM data..."
+          osmium tags-filter -o filtered.osm.pbf region.osm.pbf \
+            w/highway \
+            n/place \
+            w/building \
+            --overwrite
+          
+          osmium merge -o final_data.osm.pbf filtered.osm.pbf boundary.osm.pbf --overwrite
+          echo "Data filtered and merged."
+
+      - name: Convert to GeoJSON for Tippecanoe
+        run: |
+          echo "Converting to GeoJSON..."
+          osmium export final_data.osm.pbf -o final_data.geojson -f geojson
+          echo "Converted to GeoJSON."
+
+      - name: Generate Vector Tiles (MBTiles)
+        run: |
+          MIN_ZOOM=${{ github.event.inputs.min_zoom || 10 }}
+          MAX_ZOOM=${{ github.event.inputs.max_zoom || 14 }}
+          
+          echo "Generating tiles zoom $MIN_ZOOM-$MAX_ZOOM..."
+          mkdir -p tiles
+          
+          tippecanoe -zg \
+            --projection=EPSG:3857 \
+            --drop-densest-as-needed \
+            --drop-farthest-as-needed \
+            --minimum-zoom=$MIN_ZOOM \
+            --maximum-zoom=$MAX_ZOOM \
+            --output=tiles/kolchugino-offline.mbtiles \
+            final_data.geojson
+          
+          echo "Tiles generated."
+
+      - name: Extract MBTiles to XYZ
+        run: |
+          echo "Extracting MBTiles..."
+          mkdir -p offline-tiles
+          mb-util --image_format=png tiles/kolchugino-offline.mbtiles offline-tiles
+          echo "Extracted to offline-tiles/"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-tiles
+          path: offline-tiles/
+          retention-days: 5
+
+      - name: Deploy to GitHub Pages
+        if: success()
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./offline-tiles
+          destination_dir: offline-tiles
+          keep_files: true
