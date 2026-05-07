@@ -1,0 +1,121 @@
+name: Generate Offline Map Tiles
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_zoom:
+        description: 'Min zoom level'
+        required: true
+        default: '10'
+      max_zoom:
+        description: 'Max zoom level'
+        required: true
+        default: '14'
+      district_name:
+        description: 'District name for boundary search'
+        required: true
+        default: 'Кольчугинский район'
+  schedule:
+    - cron: '0 3 * * 0' # Weekly on Sunday at 03:00 UTC
+
+jobs:
+  generate-tiles:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            tippecanoe \
+            python3-pip \
+            osmium-tool \
+            gdal-bin \
+            sqlite3
+          pip3 install mbutil
+
+      - name: Download District Boundary
+        id: download_boundary
+        run: |
+          DISTRICT_NAME="${{ github.event.inputs.district_name || 'Кольчугинский район' }}"
+          echo "Searching for boundary: $DISTRICT_NAME"
+          
+          # Try to fetch boundary by name
+          osmium tags-filter -o boundary.osm.pbf planet-latest.osm.pbf n/admin_level=4 -R --overwrite || true
+          
+          # Fallback: If specific search fails, we might need a pre-downloaded file or bbox
+          # For now, assuming planet file is available or using a simplified approach
+          # Note: In a real scenario, you might need to download a specific extract first
+          if [ ! -f boundary.osm.pbf ] || [ ! -s boundary.osm.pbf ]; then
+             echo "::warning::Boundary file not found or empty. Attempting to fetch from Geofabrik (if available) or skipping."
+             # Example fallback for Vladimir region (adjust URL as needed)
+             wget -O region.osm.pbf "https://download.geofabrik.de/europe/russia/vladimirskaya-oblast-latest.osm.pbf" || echo "Geofabrik download failed"
+             if [ -f region.osm.pbf ]; then
+                osmium tags-filter -o boundary.osm.pbf region.osm.pbf n/admin_level=4 -R --overwrite || cp region.osm.pbf boundary.osm.pbf
+             fi
+          fi
+
+      - name: Convert Boundary to GeoJSON
+        run: |
+          if [ -f boundary.osm.pbf ]; then
+            osmium ocl boundary.osm.pbf -o boundary.geojson -f geojson
+            echo "Boundary converted successfully."
+          else
+            echo "::error::No boundary data found. Cannot proceed."
+            exit 1
+          fi
+
+      - name: Download OSM Data (Vladimir Region)
+        run: |
+          echo "Downloading OSM data for Vladimir Region..."
+          wget -O data.osm.pbf "https://download.geofabrik.de/europe/russia/vladimirskaya-oblast-latest.osm.pbf"
+
+      - name: Filter OSM Data by Boundary
+        run: |
+          echo "Filtering OSM data..."
+          osmium tags-filter -o filtered.osm.pbf data.osm.pbf w/highway n/place w/building --overwrite
+          osmium merge -o final_data.osm.pbf filtered.osm.pbf boundary.osm.pbf --overwrite
+
+      - name: Generate Vector Tiles (MBTiles)
+        run: |
+          MIN_ZOOM=${{ github.event.inputs.min_zoom || 10 }}
+          MAX_ZOOM=${{ github.event.inputs.max_zoom || 14 }}
+          
+          echo "Generating tiles from zoom $MIN_ZOOM to $MAX_ZOOM..."
+          
+          tippecanoe -zg \
+            --projection=EPSG:3857 \
+            --drop-densest-as-needed \
+            --drop-farthest-as-needed \
+            --minimum-zoom=$MIN_ZOOM \
+            --maximum-zoom=$MAX_ZOOM \
+            --output=tiles/kolchugino-offline.mbtiles \
+            final_data.osm.pbf
+
+      - name: Extract MBTiles to XYZ Directory
+        run: |
+          mkdir -p offline-tiles
+          mb-util --image_format=png tiles/kolchugino-offline.mbtiles offline-tiles
+
+      - name: Upload Tiles Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-tiles
+          path: offline-tiles/
+          retention-days: 5
+
+      - name: Deploy to GitHub Pages
+        if: success()
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./offline-tiles
+          destination_dir: offline-tiles
+          keep_files: true
