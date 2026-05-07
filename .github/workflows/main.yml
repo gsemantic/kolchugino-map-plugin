@@ -1,4 +1,4 @@
-name: Generate Offline Map Tiles
+name: Generate Offline Map Tiles1
 
 on:
   workflow_dispatch:
