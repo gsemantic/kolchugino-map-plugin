@@ -96,30 +96,30 @@ jobs:
           osmium convert boundary.osm.pbf -o boundary.geojson --geojson
           
           # Use jq to find the matching district
-          python3 << PYEOF
-import json
-import sys
-
-district_name = "$DISTRICT_NAME"
-with open('boundary.geojson', 'r', encoding='utf-8') as f:
-    data = json.load(f)
-
-found = False
-if data.get('type') == 'FeatureCollection':
-    for feature in data.get('features', []):
-        props = feature.get('properties', {})
-        name = props.get('name', '') or props.get('NAME', '')
-        if district_name.lower() in name.lower():
-            found = True
-            with open('district.geojson', 'w', encoding='utf-8') as out:
-                json.dump(feature, out, ensure_ascii=False, indent=2)
-            print(f"Found district: {name}")
-            break
-
-if not found:
-    print(f"District '{district_name}' not found", file=sys.stderr)
-    sys.exit(1)
-PYEOF
+          python3 << 'PYEOF'
+          import json
+          import sys
+          
+          district_name = "$DISTRICT_NAME"
+          with open('boundary.geojson', 'r', encoding='utf-8') as f:
+              data = json.load(f)
+          
+          found = False
+          if data.get('type') == 'FeatureCollection':
+              for feature in data.get('features', []):
+                  props = feature.get('properties', {})
+                  name = props.get('name', '') or props.get('NAME', '')
+                  if district_name.lower() in name.lower():
+                      found = True
+                      with open('district.geojson', 'w', encoding='utf-8') as out:
+                          json.dump(feature, out, ensure_ascii=False, indent=2)
+                      print(f"Found district: {name}")
+                      break
+          
+          if not found:
+              print(f"District '{district_name}' not found", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
           
           if [ ! -f district.geojson ] || [ ! -s district.geojson ]; then
             echo "::error::District boundary not found"
