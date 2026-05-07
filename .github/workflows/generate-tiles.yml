@@ -22,7 +22,6 @@ on:
 jobs:
   generate-tiles:
     runs-on: ubuntu-latest
-    container: ghcr.io/osmcode/tippecanoe:latest
     
     steps:
     - name: Checkout repository
@@ -33,24 +32,47 @@ jobs:
       with:
         python-version: '3.11'
         
-    - name: Install additional tools
+    - name: Install system dependencies
       run: |
-        apt-get update && apt-get install -y \
+        sudo apt-get update && sudo apt-get install -y \
+          libsqlite3-dev \
+          zlib1g-dev \
+          libpng-dev \
+          libjpeg-dev \
+          libprotobuf-dev \
+          protobuf-compiler \
+          libboost-all-dev \
           gdal-bin \
           sqlite3 \
           wget \
           curl \
           jq \
-          osmium-tool
+          osmium-tool \
+          python3-pip
           
+    - name: Install mb-util
+      run: |
+        pip3 install --user mbutil
+        
+    - name: Build and install Tippecanoe
+      run: |
+        cd /tmp
+        git clone --depth 1 https://github.com/felt/tippecanoe.git
+        cd tippecanoe
+        make -j$(nproc)
+        sudo make install
+        tippecanoe --version
+        
     - name: Download administrative boundaries
       run: |
-        # Скачиваем границы Кольчугинского района из Geofabrik или Overpass
+        mkdir -p data/boundaries
+        
+        # Скачиваем границы Кольчугинского района из Overpass
         cat > /tmp/query.overpass << 'EOF'
         [out:json][timeout:300];
-        area["name"="Кольчугинский район"]->.searchArea;
+        area[admin_level=6][name~"Кольчугин"]->.searchArea;
         (
-          relation["boundary"="administrative"](area.searchArea);
+          relation[boundary=administrative](area.searchArea);
         );
         out body;
         >;
@@ -61,128 +83,161 @@ jobs:
           https://overpass-api.de/api/interpreter \
           > /tmp/boundaries.json || echo "Failed to fetch from Overpass"
           
-        # Альтернатива: извлечение из готового дампа
-        if [ ! -s /tmp/boundaries.json ]; then
-          wget -q "https://download.geofabrik.de/europe/russia/volga-fed-district-latest.osm.pbf" \
-            -O /tmp/district.osm.pbf || true
-          
-          if [ -f /tmp/district.osm.pbf ]; then
-            osmium tags-filter /tmp/district.osm.pbf r/name=Кольчугинский район -o /tmp/kolchugino.osm.pbf
-            osmium ocf /tmp/kolchugino.osm.pbf -o data/boundaries/kolchugino_district.geojson
-          fi
-        fi
-        
-        # Конвертация в GeoJSON если нужно
-        if [ -f /tmp/boundaries.json ]; then
+        # Конвертация JSON в GeoJSON
+        if [ -s /tmp/boundaries.json ]; then
           python3 << 'PYEOF'
 import json
-with open('/tmp/boundaries.json', 'r') as f:
-    data = json.load(f)
-# Простая конвертация элементов в GeoJSON
-features = []
-for elem in data.get('elements', []):
-    if elem.get('type') == 'relation' and 'geometry' in elem:
-        feature = {
-            "type": "Feature",
-            "properties": {"name": elem.get('tags', {}).get('name', 'Kolchugino')},
-            "geometry": {"type": "MultiPolygon", "coordinates": []}
-        }
-        # Здесь нужна более сложная логика сборки полигонов
-        features.append(feature)
-        
-geojson = {"type": "FeatureCollection", "features": features}
-with open('data/boundaries/kolchugino_district.geojson', 'w') as f:
-    json.dump(geojson, f, indent=2)
+import sys
+
+try:
+    with open('/tmp/boundaries.json', 'r') as f:
+        data = json.load(f)
+    
+    features = []
+    for elem in data.get('elements', []):
+        if elem.get('type') == 'relation' and 'geometry' in elem:
+            # Собираем координаты из ways
+            nodes = {}
+            for node in data.get('elements', []):
+                if node.get('type') == 'node':
+                    nodes[node['id']] = [node.get('lon'), node.get('lat')]
+            
+            coords = []
+            for way in elem.get('geometry', []):
+                if isinstance(way, list):
+                    ring = []
+                    for node_id in way:
+                        if node_id in nodes:
+                            ring.append(nodes[node_id])
+                    if len(ring) > 2:
+                        coords.append([ring])
+            
+            if coords:
+                feature = {
+                    "type": "Feature",
+                    "properties": {"name": elem.get('tags', {}).get('name', 'Kolchugino')},
+                    "geometry": {"type": "MultiPolygon", "coordinates": coords}
+                }
+                features.append(feature)
+    
+    geojson = {"type": "FeatureCollection", "features": features}
+    with open('data/boundaries/kolchugino_district.geojson', 'w') as f:
+        json.dump(geojson, f, indent=2)
+    print(f"Saved {len(features)} features")
+except Exception as e:
+    print(f"Error: {e}", file=sys.stderr)
+    sys.exit(1)
 PYEOF
+        fi
+        
+        # Fallback: если не получилось, используем bbox
+        if [ ! -s data/boundaries/kolchugino_district.geojson ]; then
+          echo '{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"name":"Kolchugino"},"geometry":{"type":"Polygon","coordinates":[[[41.0,56.0],[42.0,56.0],[42.0,57.0],[41.0,57.0],[41.0,56.0]]]}}]}' > data/boundaries/kolchugino_district.geojson
+          echo "Using fallback bbox"
         fi
         
     - name: Download OSM data for district
       run: |
-        # Скачиваем данные OSM для области интереса
-        # Используем overpass API для получения данных
-        cat > /tmp/overpass_query.txt << EOF
-        [out:pbf][bbox:{{bbox}}];
-        (
-          node["tourism"];
-          way["tourism"];
-          relation["tourism"];
-          node["amenity"];
-          way["amenity"];
-          relation["amenity"];
-          node["shop"];
-          way["shop"];
-          node["leisure"];
-          way["leisure"];
-          node["historic"];
-          way["historic"];
-          node["building"];
-          way["building"];
-          relation["building"];
-          way["waterway"];
-          way["natural"];
-          way["landuse"];
-          way["highway"];
-          relation["route"];
-        );
-        out body;
-        >;
-        out skel qt;
-        EOF
+        mkdir -p data
         
         # Получаем bbox из границ
-        if [ -f data/boundaries/kolchugino_district.geojson ]; then
-          BBOX=$(jq -r '.features[0].bbox | join(",")' data/boundaries/kolchugino_district.geojson 2>/dev/null || echo "41.0,56.0,42.0,57.0")
-          sed -i "s/{{bbox}}/$BBOX/" /tmp/overpass_query.txt
-        else
-          # Примерные координаты Кольчугино
-          echo "41.0,56.0,42.0,57.0" > /tmp/bbox.txt
+        BBOX=$(jq -r '.features[0].geometry.coordinates[0][0] | [.[0][0], .[1][0], .[2][0], .[3][1]] | join(",")' data/boundaries/kolchugino_district.geojson 2>/dev/null || echo "")
+        
+        if [ -z "$BBOX" ] || [ "$BBOX" = "null" ]; then
           BBOX="41.0,56.0,42.0,57.0"
         fi
         
+        echo "Using bbox: $BBOX"
+        
+        # Запрос к Overpass API
+        cat > /tmp/overpass_query.txt << EOF
+[out:pbf][bbox:$BBOX];
+(
+  node["tourism"];
+  way["tourism"];
+  relation["tourism"];
+  node["amenity"];
+  way["amenity"];
+  relation["amenity"];
+  node["shop"];
+  way["shop"];
+  node["leisure"];
+  way["leisure"];
+  node["historic"];
+  way["historic"];
+  node["building"];
+  way["building"];
+  relation["building"];
+  way["waterway"];
+  way["natural"];
+  way["landuse"];
+  way["highway"];
+  relation["route"];
+);
+out body;
+>;
+out skel qt;
+EOF
+        
         curl -X POST -F "data=@/tmp/overpass_query.txt" \
           https://overpass-api.de/api/interpreter \
-          -o data/osm_data.pbf || wget -q "https://download.geofabrik.de/europe/russia/volga-fed-district-latest.osm.pbf" -O data/osm_data.pbf
+          -o data/osm_data.pbf || echo "Overpass failed, trying Geofabrik..."
           
+        # Fallback на Geofabrik если Overpass не сработал
+        if [ ! -s data/osm_data.pbf ]; then
+          wget -q "https://download.geofabrik.de/europe/russia/volga-fed-district-latest.osm.pbf" \
+            -O /tmp/volga.osm.pbf || true
+          
+          if [ -f /tmp/volga.osm.pbf ]; then
+            osmium tags-filter /tmp/volga.osm.pfb b/$BBOX -o data/osm_data.pbf || cp /tmp/volga.osm.pbf data/osm_data.pbf
+          fi
+        fi
+        
     - name: Generate vector tiles with custom style
       run: |
-        # Создаем MBTiles с кастомным стилем
-        # Используем tippecanoe для генерации тайлов
+        mkdir -p tiles
         
         MIN_ZOOM=${{ github.event.inputs.min_zoom || 10 }}
         MAX_ZOOM=${{ github.event.inputs.max_zoom || 14 }}
         
-        # Если есть GeoJSON границы - добавляем как отдельный слой
-        if [ -f data/boundaries/kolchugino_district.geojson ]; then
-          tippecanoe -zg \
-            --maximum-zoom=$MAX_ZOOM \
-            --minimum-zoom=$MIN_ZOOM \
-            --output=tiles/kolchugino-offline.mbtiles \
-            --layer=boundaries data/boundaries/kolchugino_district.geojson \
-            --force
-        fi
+        echo "Generating tiles from zoom $MIN_ZOOM to $MAX_ZOOM"
         
-        # Добавляем OSM данные
-        if [ -f data/osm_data.pbf ]; then
-          tippecanoe -a \
-            --maximum-zoom=$MAX_ZOOM \
-            --minimum-zoom=$MIN_ZOOM \
-            --output=tiles/kolchugino-offline.mbtiles \
-            --layer=osm_data data/osm_data.pbf \
-            --force \
-            --replace
-        fi
-        
-        # Генерируем XYZ тайлы из MBTiles для совместимости
+        # Создаем MBTiles с границами и OSM данными
+        tippecanoe -zg \
+          --maximum-zoom=$MAX_ZOOM \
+          --minimum-zoom=$MIN_ZOOM \
+          --output=tiles/kolchugino-offline.mbtiles \
+          --layer=boundaries data/boundaries/kolchugino_district.geojson \
+          --layer=osm_data data/osm_data.pbf \
+          --force \
+          --drop-densest-as-needed \
+          --drop-farther-than=10 \
+          --coarsest-resolution=4096 \
+          --finest-resolution=1 \
+          --no-tile-size-limit \
+          2>&1 | tee /tmp/tippecanoe.log || echo "Tippecanoe completed with warnings"
+          
+        # Проверка результата
         if [ -f tiles/kolchugino-offline.mbtiles ]; then
-          mkdir -p tiles/xyz
-          mb-util --image_format=png tiles/kolchugino-offline.mbtiles tiles/xyz
+          echo "MBTiles created successfully"
+          sqlite3 tiles/kolchugino-offline.mbtiles "SELECT COUNT(*) FROM tiles;" || true
+        else
+          echo "ERROR: MBTiles not created!"
+          exit 1
+        fi
+        
+        # Генерируем XYZ тайлы из MBTiles
+        mkdir -p tiles/xyz
+        if command -v mb-util &> /dev/null; then
+          mb-util --image_format=png tiles/kolchugino-offline.mbtiles tiles/xyz || echo "mb-util failed"
+        else
+          echo "mb-util not found, skipping XYZ generation"
         fi
         
     - name: Create preview image
       run: |
-        # Создаем превью карты (первый тайл z=10)
-        if [ -d tiles/xyz/10/0 ]; then
-          cp tiles/xyz/10/0/0.png tiles/preview.png 2>/dev/null || true
+        if [ -d tiles/xyz/10 ]; then
+          find tiles/xyz/10 -name "*.png" | head -1 | xargs -I {} cp {} tiles/preview.png 2>/dev/null || true
         fi
         
     - name: Upload tiles as artifacts
@@ -209,7 +264,7 @@ PYEOF
     - name: Update tiles info
       run: |
         echo "## Результаты генерации тайлов" > tiles/INFO.md
-        echo "- Дата: $(date -u +"%Y-%m-%d %H:%M UTC")" >> tiles/INFO.md
+        echo "- Дата: $(date -u +'%Y-%m-%d %H:%M UTC')" >> tiles/INFO.md
         echo "- Мин. зум: ${{ github.event.inputs.min_zoom || 10 }}" >> tiles/INFO.md
         echo "- Макс. зум: ${{ github.event.inputs.max_zoom || 14 }}" >> tiles/INFO.md
         
@@ -220,7 +275,7 @@ PYEOF
         
         if [ -d tiles/xyz ]; then
           TILE_COUNT=$(find tiles/xyz -name "*.png" | wc -l)
-          XYZ_SIZE=$(du -sh tiles/xyz | cut -f1)
+          XYZ_SIZE=$(du -sh tiles/xyz 2>/dev/null | cut -f1 || echo "N/A")
           echo "- Количество XYZ тайлов: $TILE_COUNT" >> tiles/INFO.md
           echo "- Размер XYZ: $XYZ_SIZE" >> tiles/INFO.md
         fi
