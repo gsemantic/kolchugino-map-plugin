@@ -49,7 +49,7 @@ jobs:
           echo "Downloading OSM data for Vladimir Region via Overpass API..."
           
           cat > overpass-query.ql << 'QUERYEOF'
-          [out:xml][timeout:300];
+          [out:xml][timeout:180];
           (
             way["highway"](55.5,38.0,56.8,42.5);
             node["place"](55.5,38.0,56.8,42.5);
@@ -57,8 +57,6 @@ jobs:
             relation["boundary"="administrative"]["admin_level"="4"]["name"="Владимирская область"];
           );
           out body;
-          >;
-          out skel qt;
           QUERYEOF
           
           curl -s -X POST \
@@ -69,6 +67,13 @@ jobs:
           
           if [ ! -f region.osm ] || [ ! -s region.osm ]; then
             echo "::error::Overpass API returned empty response"
+            exit 1
+          fi
+          
+          # Check if response contains HTML error page
+          if head -c 200 region.osm | grep -qi "<html"; then
+            echo "::error::Overpass API returned HTML error page:"
+            cat region.osm
             exit 1
           fi
           
