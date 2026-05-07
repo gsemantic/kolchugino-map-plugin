@@ -97,8 +97,11 @@ jobs:
             exit 1
           fi
           
-          # Convert to GeoJSON and find the district by name
-          osmium cat boundary.osm.pbf -o boundary.geojson --geojson
+          # Convert PBF to OSM XML first
+          osmium cat boundary.osm.pbf -o boundary.osm
+          
+          # Convert OSM XML to GeoJSON using ogr2ogr (from gdal-bin)
+          ogr2ogr -f GeoJSON boundary.geojson boundary.osm boundaries
           
           # Use jq to find the matching district
           python3 << 'PYEOF'
