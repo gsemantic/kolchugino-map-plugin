@@ -93,7 +93,7 @@ jobs:
           fi
           
           # Convert to GeoJSON and find the district by name
-          osmium convert boundary.osm.pbf -o boundary.geojson --geojson
+          osmium cat boundary.osm.pbf -o boundary.geojson --geojson
           
           # Use jq to find the matching district
           python3 << 'PYEOF'
