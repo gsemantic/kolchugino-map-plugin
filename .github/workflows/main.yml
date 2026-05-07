@@ -16,7 +16,7 @@ on:
         required: true
         default: 'Кольчугинский район'
   schedule:
-    - cron: '0 3 * * 0' # Weekly on Sunday at 03:00 UTC
+    - cron: '0 3 * * 0'
 
 jobs:
   generate-tiles:
@@ -39,45 +39,50 @@ jobs:
             osmium-tool \
             gdal-bin \
             sqlite3 \
+            curl \
             jq
           pip3 install mbutil
 
-      - name: Download Region OSM Data
-        id: download_region
+      - name: Download OSM Data via Overpass API
+        id: download_overpass
         run: |
-          echo "Downloading OSM data for Vladimir Region..."
+          echo "Downloading OSM data for Vladimir Region via Overpass API..."
           
-          # Try multiple possible URLs for Vladimir region
-          URLS=(
-            "https://download.geofabrik.de/europe/russia/vladimirskaya-oblast-latest.osm.pbf"
-            "https://download.geofabrik.de/russia/vladimirskaya-oblast-latest.osm.pbf"
-            "https://download.geofabrik.de/europe/russia/central-fed-district/vladimirskaya-oblast-latest.osm.pbf"
-          )
+          # Bounding box for Vladimir Oblast (approximate)
+          # West: 38.0, South: 55.5, East: 42.5, North: 56.8
+          cat > overpass-query.ql << 'EOF'
+          [out:xml][timeout:300];
+          (
+            way["highway"](55.5,38.0,56.8,42.5);
+            node["place"](55.5,38.0,56.8,42.5);
+            way["building"](55.5,38.0,56.8,42.5);
+            relation["boundary"="administrative"]["admin_level"="4"]["name"="Владимирская область"];
+          );
+          out body;
+          >;
+          out skel qt;
+          EOF
           
-          DOWNLOADED=false
-          for URL in "${URLS[@]}"; do
-            echo "Trying: $URL"
-            wget --max-redirect=5 --timeout=60 -O region.osm.pbf "$URL" 2>&1
-            # Validate that it's actually a PBF file (check magic bytes)
-            if [ -f region.osm.pbf ] && [ -s region.osm.pbf ]; then
-              FILE_TYPE=$(file -b region.osm.pbf)
-              if echo "$FILE_TYPE" | grep -qi "data\|binary\|pbf\|osm"; then
-                # Additional check: try to read with osmium
-                if osmium fileinfo region.osm.pbf > /dev/null 2>&1; then
-                  echo "✅ Valid PBF downloaded from: $URL"
-                  DOWNLOADED=true
-                  break
-                fi
-              fi
-            fi
-            echo "❌ Failed or invalid file from: $URL"
-            rm -f region.osm.pbf
-          done
+          echo "Querying Overpass API..."
+          curl -s -X POST \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            --data-urlencode "data@overpass-query.ql" \
+            -o region.osm \
+            "https://overpass-api.de/api/interpreter"
           
-          if [ "$DOWNLOADED" = false ]; then
-            echo "::error::Failed to download valid OSM PBF file from any source"
+          if [ ! -f region.osm ] || [ ! -s region.osm ]; then
+            echo "::error::Overpass API returned empty response"
             exit 1
           fi
+          
+          echo "Response size: $(du -h region.osm | cut -f1)"
+          
+          # Convert XML to PBF
+          echo "Converting OSM XML to PBF..."
+          osmium cat region.osm -o region.osm.pbf
+          
+          echo "PBF size: $(du -h region.osm.pbf | cut -f1)"
+          echo "✅ Data downloaded and converted."
 
       - name: Extract District Boundary
         id: extract_boundary
@@ -85,16 +90,22 @@ jobs:
           DISTRICT_NAME="${{ github.event.inputs.district_name || 'Кольчугинский район' }}"
           echo "Searching for boundary: $DISTRICT_NAME"
           
-          # Extract admin_level=4 boundaries (district/raion level in Russia)
-          osmium tags-filter -o boundary.osm.pbf region.osm.pbf n/admin_level=4 -R --overwrite
+          # Try to find the district boundary
+          osmium tags-filter -o boundary.osm.pbf region.osm.pbf \
+            r/boundary=administrative \
+            n/admin_level=4 \
+            --overwrite
           
           if [ ! -f boundary.osm.pbf ] || [ ! -s boundary.osm.pbf ]; then
             echo "::warning::No admin_level=4 boundaries found. Trying admin_level=6..."
-            osmium tags-filter -o boundary.osm.pbf region.osm.pbf n/admin_level=6 -R --overwrite
+            osmium tags-filter -o boundary.osm.pbf region.osm.pbf \
+              r/boundary=administrative \
+              n/admin_level=6 \
+              --overwrite
           fi
           
           if [ ! -f boundary.osm.pbf ] || [ ! -s boundary.osm.pbf ]; then
-            echo "::warning::No boundaries found. Using full region as boundary..."
+            echo "::warning::No specific boundary found. Using full region..."
             cp region.osm.pbf boundary.osm.pbf
           fi
           
@@ -115,14 +126,14 @@ jobs:
         run: |
           echo "Filtering OSM data for relevant features..."
           
-          # Extract highways, places, buildings from region data
+          # Extract highways, places, buildings
           osmium tags-filter -o filtered.osm.pbf region.osm.pbf \
             w/highway \
             n/place \
             w/building \
             --overwrite
           
-          # Merge filtered data with boundary
+          # Merge with boundary
           osmium merge -o final_data.osm.pbf filtered.osm.pbf boundary.osm.pbf --overwrite
           
           echo "✅ Data filtered and merged."
@@ -131,10 +142,7 @@ jobs:
       - name: Convert OSM to GeoJSON for Tippecanoe
         run: |
           echo "Converting OSM data to GeoJSON..."
-          
-          # Export to GeoJSON (tippecanoe works better with GeoJSON than PBF)
           osmium export final_data.osm.pbf -o final_data.geojson -f geojson
-          
           echo "✅ Converted to GeoJSON."
           echo "GeoJSON size: $(du -h final_data.geojson | cut -f1)"
 
@@ -144,7 +152,6 @@ jobs:
           MAX_ZOOM=${{ github.event.inputs.max_zoom || 14 }}
           
           echo "Generating tiles from zoom $MIN_ZOOM to $MAX_ZOOM..."
-          
           mkdir -p tiles
           
           tippecanoe -zg \
