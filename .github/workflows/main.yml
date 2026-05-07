@@ -38,50 +38,105 @@ jobs:
             python3-pip \
             osmium-tool \
             gdal-bin \
-            sqlite3
+            sqlite3 \
+            jq
           pip3 install mbutil
 
-      - name: Download District Boundary
-        id: download_boundary
+      - name: Download Region OSM Data
+        id: download_region
+        run: |
+          echo "Downloading OSM data for Vladimir Region..."
+          
+          # Try multiple possible URLs for Vladimir region
+          URLS=(
+            "https://download.geofabrik.de/europe/russia/vladimirskaya-oblast-latest.osm.pbf"
+            "https://download.geofabrik.de/russia/vladimirskaya-oblast-latest.osm.pbf"
+            "https://download.geofabrik.de/europe/russia/central-fed-district/vladimirskaya-oblast-latest.osm.pbf"
+          )
+          
+          DOWNLOADED=false
+          for URL in "${URLS[@]}"; do
+            echo "Trying: $URL"
+            wget --max-redirect=5 --timeout=60 -O region.osm.pbf "$URL" 2>&1
+            # Validate that it's actually a PBF file (check magic bytes)
+            if [ -f region.osm.pbf ] && [ -s region.osm.pbf ]; then
+              FILE_TYPE=$(file -b region.osm.pbf)
+              if echo "$FILE_TYPE" | grep -qi "data\|binary\|pbf\|osm"; then
+                # Additional check: try to read with osmium
+                if osmium fileinfo region.osm.pbf > /dev/null 2>&1; then
+                  echo "✅ Valid PBF downloaded from: $URL"
+                  DOWNLOADED=true
+                  break
+                fi
+              fi
+            fi
+            echo "❌ Failed or invalid file from: $URL"
+            rm -f region.osm.pbf
+          done
+          
+          if [ "$DOWNLOADED" = false ]; then
+            echo "::error::Failed to download valid OSM PBF file from any source"
+            exit 1
+          fi
+
+      - name: Extract District Boundary
+        id: extract_boundary
         run: |
           DISTRICT_NAME="${{ github.event.inputs.district_name || 'Кольчугинский район' }}"
           echo "Searching for boundary: $DISTRICT_NAME"
           
-          # Try to fetch boundary by name
-          osmium tags-filter -o boundary.osm.pbf planet-latest.osm.pbf n/admin_level=4 -R --overwrite || true
+          # Extract admin_level=4 boundaries (district/raion level in Russia)
+          osmium tags-filter -o boundary.osm.pbf region.osm.pbf n/admin_level=4 -R --overwrite
           
-          # Fallback: If specific search fails, we might need a pre-downloaded file or bbox
-          # For now, assuming planet file is available or using a simplified approach
-          # Note: In a real scenario, you might need to download a specific extract first
           if [ ! -f boundary.osm.pbf ] || [ ! -s boundary.osm.pbf ]; then
-             echo "::warning::Boundary file not found or empty. Attempting to fetch from Geofabrik (if available) or skipping."
-             # Example fallback for Vladimir region (adjust URL as needed)
-             wget -O region.osm.pbf "https://download.geofabrik.de/europe/russia/vladimirskaya-oblast-latest.osm.pbf" || echo "Geofabrik download failed"
-             if [ -f region.osm.pbf ]; then
-                osmium tags-filter -o boundary.osm.pbf region.osm.pbf n/admin_level=4 -R --overwrite || cp region.osm.pbf boundary.osm.pbf
-             fi
+            echo "::warning::No admin_level=4 boundaries found. Trying admin_level=6..."
+            osmium tags-filter -o boundary.osm.pbf region.osm.pbf n/admin_level=6 -R --overwrite
           fi
+          
+          if [ ! -f boundary.osm.pbf ] || [ ! -s boundary.osm.pbf ]; then
+            echo "::warning::No boundaries found. Using full region as boundary..."
+            cp region.osm.pbf boundary.osm.pbf
+          fi
+          
+          echo "Boundary file size: $(du -h boundary.osm.pbf | cut -f1)"
 
       - name: Convert Boundary to GeoJSON
         run: |
-          if [ -f boundary.osm.pbf ]; then
-            osmium ocl boundary.osm.pbf -o boundary.geojson -f geojson
-            echo "Boundary converted successfully."
+          if [ -f boundary.osm.pbf ] && [ -s boundary.osm.pbf ]; then
+            osmium export boundary.osm.pbf -o boundary.geojson -f geojson
+            echo "✅ Boundary converted successfully."
+            echo "GeoJSON file size: $(du -h boundary.geojson | cut -f1)"
           else
             echo "::error::No boundary data found. Cannot proceed."
             exit 1
           fi
 
-      - name: Download OSM Data (Vladimir Region)
-        run: |
-          echo "Downloading OSM data for Vladimir Region..."
-          wget -O data.osm.pbf "https://download.geofabrik.de/europe/russia/vladimirskaya-oblast-latest.osm.pbf"
-
       - name: Filter OSM Data by Boundary
         run: |
-          echo "Filtering OSM data..."
-          osmium tags-filter -o filtered.osm.pbf data.osm.pbf w/highway n/place w/building --overwrite
+          echo "Filtering OSM data for relevant features..."
+          
+          # Extract highways, places, buildings from region data
+          osmium tags-filter -o filtered.osm.pbf region.osm.pbf \
+            w/highway \
+            n/place \
+            w/building \
+            --overwrite
+          
+          # Merge filtered data with boundary
           osmium merge -o final_data.osm.pbf filtered.osm.pbf boundary.osm.pbf --overwrite
+          
+          echo "✅ Data filtered and merged."
+          echo "Final data size: $(du -h final_data.osm.pbf | cut -f1)"
+
+      - name: Convert OSM to GeoJSON for Tippecanoe
+        run: |
+          echo "Converting OSM data to GeoJSON..."
+          
+          # Export to GeoJSON (tippecanoe works better with GeoJSON than PBF)
+          osmium export final_data.osm.pbf -o final_data.geojson -f geojson
+          
+          echo "✅ Converted to GeoJSON."
+          echo "GeoJSON size: $(du -h final_data.geojson | cut -f1)"
 
       - name: Generate Vector Tiles (MBTiles)
         run: |
@@ -90,6 +145,8 @@ jobs:
           
           echo "Generating tiles from zoom $MIN_ZOOM to $MAX_ZOOM..."
           
+          mkdir -p tiles
+          
           tippecanoe -zg \
             --projection=EPSG:3857 \
             --drop-densest-as-needed \
@@ -97,12 +154,17 @@ jobs:
             --minimum-zoom=$MIN_ZOOM \
             --maximum-zoom=$MAX_ZOOM \
             --output=tiles/kolchugino-offline.mbtiles \
-            final_data.osm.pbf
+            final_data.geojson
+          
+          echo "✅ Tiles generated."
+          echo "MBTiles size: $(du -h tiles/kolchugino-offline.mbtiles | cut -f1)"
 
       - name: Extract MBTiles to XYZ Directory
         run: |
+          echo "Extracting MBTiles to XYZ structure..."
           mkdir -p offline-tiles
           mb-util --image_format=png tiles/kolchugino-offline.mbtiles offline-tiles
+          echo "✅ Extracted to offline-tiles/"
 
       - name: Upload Tiles Artifact
         uses: actions/upload-artifact@v4
