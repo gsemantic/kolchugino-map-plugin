@@ -15,50 +15,35 @@
 
 # Dependencies
 node_modules/
+venv/
+.venv/
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.so
-*.egg-info/
-.eggs/
-build/
+.mypy_cache/
+.pytest_cache/
 dist/
-*.whl
-*.zip
-*.tar.gz
-*.tar.bz2
-*.tar.xz
+build/
+target/
+.gradle/
 
-# System files
+# OS generated files
 .DS_Store
 Thumbs.db
-*.swp
-*.swo
 
-# Coverage reports
-.coverage
-coverage/
-htmlcov/
-
-# Python specific
+# Compiled files
 *.pyc
-__pycache__/
-.pytest_cache/
-.mypy_cache/
-.venv/
-venv/
-env/
-
-# Build artifacts
+*.class
 *.o
-*.obj
 *.exe
 *.dll
 *.so
 *.a
+*.obj
 *.out
-*.class
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
 
 # Compressed files
 *.zip
