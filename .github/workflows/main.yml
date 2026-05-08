@@ -128,20 +128,39 @@ jobs:
               print(f"Found {len(data.get('features', []))} features in GeoJSON")
               for feature in data.get('features', []):
                   props = feature.get('properties', {})
-                  name = props.get('name', '') or props.get('NAME', '')
-                  print(f"Checking feature with name: '{name}'")
-                  if district_name.lower() in name.lower():
-                      found = True
-                      with open('district.geojson', 'w', encoding='utf-8') as out:
-                          json.dump(feature, out, ensure_ascii=False, indent=2)
-                      print(f"Found district: {name}")
+                  # Check multiple possible property names for district name
+                  possible_names = [
+                      props.get('name', ''),
+                      props.get('NAME', ''),
+                      props.get('name:ru', ''),
+                      props.get('name:en', ''),
+                      props.get('official:name', ''),
+                      props.get('admin_level', '')
+                  ]
+                  for name in possible_names:
+                      if not name:
+                          continue
+                      print(f"Checking feature with name: '{name}'")
+                      if district_name.lower() in str(name).lower():
+                          found = True
+                          with open('district.geojson', 'w', encoding='utf-8') as out:
+                              json.dump(feature, out, ensure_ascii=False, indent=2)
+                          print(f"Found district: {name}")
+                          break
+                  if found:
                       break
           
           if not found:
               print(f"District '{district_name}' not found in GeoJSON", file=sys.stderr)
               # Print all found names for debugging
               if data.get('type') == 'FeatureCollection':
-                  names = [f.get('properties', {}).get('name', '') for f in data.get('features', [])]
+                  names = []
+                  for f in data.get('features', []):
+                      props = f.get('properties', {})
+                      for key in ['name', 'NAME', 'name:ru', 'name:en', 'official:name']:
+                          if props.get(key):
+                              names.append(props.get(key))
+                              break
                   print(f"Available names: {names}", file=sys.stderr)
               sys.exit(1)
           PYEOF
