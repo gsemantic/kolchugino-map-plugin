@@ -48,6 +48,7 @@ class KOLCHUGINO_MAP_Shortcode {
 					'tilesUrl'    => $offline_tiles_url,
 					'minZoom'     => KOLCHUGINO_MAP_Settings::get_offline_min_zoom(),
 					'maxZoom'     => KOLCHUGINO_MAP_Settings::get_offline_max_zoom(),
+					'tileMode'    => KOLCHUGINO_MAP_Settings::get_tile_mode(),
 					'i18n'        => array(
 						'error'      => __( 'Произошла ошибка при загрузке карты', 'kolchugino-map' ),
 						'noResults'  => __( 'Объекты не найдены', 'kolchugino-map' ),
