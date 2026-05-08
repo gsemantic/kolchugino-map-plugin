@@ -10,9 +10,11 @@
     var vectorLayer = null;
     var allObjects = [];
     var currentFilter = 'all';
-    var tileLayer = null;
+    var baseLayer = null;
     var isOffline = true;
     var popup = null;
+    // Режим тайлов: 'vector' (PBF) или 'raster' (PNG). По умолчанию vector
+    var tileMode = localStorage.getItem('kolchugino_tile_mode') || 'vector';
 
     // Цвета категорий
     var CATEGORY_COLORS = {
@@ -33,6 +35,207 @@
         'other': '#95a5a6'
     };
 
+    // Стили для векторных тайлов (упрощённый стиль Mapbox GL)
+    var vectorTileStyle = [
+        // Фон (земля)
+        new ol.style.Style({
+            fill: new ol.style.Fill({ color: '#f8f4f0' })
+        }),
+        // Вода
+        new ol.style.Style({
+            fill: new ol.style.Fill({ color: '#aadaff' }),
+            stroke: new ol.style.Stroke({ color: '#8cc9ff', width: 1 })
+        }),
+        // Леса и парки
+        new ol.style.Style({
+            fill: new ol.style.Fill({ color: '#d4edc4' })
+        }),
+        // Дороги
+        new ol.style.Style({
+            stroke: new ol.style.Stroke({ color: '#ffffff', width: 2 })
+        }),
+        // Здания
+        new ol.style.Style({
+            fill: new ol.style.Fill({ color: '#d9d9d9' }),
+            stroke: new ol.style.Stroke({ color: '#cccccc', width: 1 })
+        }),
+        // Границы
+        new ol.style.Style({
+            stroke: new ol.style.Stroke({ color: '#bd3c3c', width: 2, lineDash: [4, 2] })
+        }),
+        // Подписи населённых пунктов
+        new ol.style.Style({
+            text: new ol.style.Text({
+                font: '12px "Noto Sans", sans-serif',
+                fill: new ol.style.Fill({ color: '#333333' }),
+                stroke: new ol.style.Stroke({ color: '#ffffff', width: 3 })
+            })
+        })
+    ];
+
+    /**
+     * Создание стиля для векторных тайлов на основе слоя
+     */
+    function getVectorTileStyle(feature, resolution) {
+        var type = feature.getGeometry().getType();
+        var layer = feature.get('layer');
+
+        // Вода
+        if (layer === 'water' || feature.get('water') !== undefined) {
+            return new ol.style.Style({
+                fill: new ol.style.Fill({ color: '#aadaff' }),
+                stroke: new ol.style.Stroke({ color: '#8cc9ff', width: 1 })
+            });
+        }
+
+        // Леса
+        if (layer === 'landuse' && (feature.get('class') === 'wood' || feature.get('class') === 'forest')) {
+            return new ol.style.Style({
+                fill: new ol.style.Fill({ color: '#d4edc4' })
+            });
+        }
+
+        // Парки
+        if (layer === 'landuse' && (feature.get('class') === 'park' || feature.get('class') === 'grass')) {
+            return new ol.style.Style({
+                fill: new ol.style.Fill({ color: '#e0f0d0' })
+            });
+        }
+
+        // Здания
+        if (layer === 'building' || type === 'Polygon') {
+            return new ol.style.Style({
+                fill: new ol.style.Fill({ color: '#e8e8e8' }),
+                stroke: new ol.style.Stroke({ color: '#cccccc', width: 1 })
+            });
+        }
+
+        // Дороги
+        if (layer === 'transportation' || layer === 'roads') {
+            var roadClass = feature.get('class') || '';
+            var width = 2;
+            var color = '#ffffff';
+
+            if (roadClass === 'motorway' || roadClass === 'trunk') {
+                width = 4;
+                color = '#ffd700';
+            } else if (roadClass === 'primary') {
+                width = 3;
+                color = '#ffaa00';
+            } else if (roadClass === 'secondary') {
+                width = 2.5;
+                color = '#ffcc00';
+            } else if (roadClass === 'tertiary') {
+                width = 2;
+                color = '#ffffff';
+            } else if (roadClass === 'residential' || roadClass === 'service') {
+                width = 1.5;
+                color = '#eeeeee';
+            }
+
+            return new ol.style.Style({
+                stroke: new ol.style.Stroke({ color: color, width: width })
+            });
+        }
+
+        // Границы
+        if (layer === 'boundaries' || feature.get('boundary') !== undefined) {
+            var adminLevel = feature.get('admin_level') || '8';
+            var width = adminLevel <= '4' ? 3 : 2;
+            var color = adminLevel <= '4' ? '#bd3c3c' : '#999999';
+
+            return new ol.style.Style({
+                stroke: new ol.style.Stroke({
+                    color: color,
+                    width: width,
+                    lineDash: adminLevel <= '4' ? null : [4, 2]
+                })
+            });
+        }
+
+        // Подписи (точки с именем)
+        var name = feature.get('name');
+        if (name && layer === 'places') {
+            var fontSize = 12;
+            if (feature.get('class') === 'city') fontSize = 16;
+            else if (feature.get('class') === 'town') fontSize = 14;
+            else if (feature.get('class') === 'village') fontSize = 12;
+            else fontSize = 11;
+
+            return new ol.style.Style({
+                image: null,
+                text: new ol.style.Text({
+                    text: name,
+                    font: fontSize + 'px "Noto Sans", sans-serif',
+                    fill: new ol.style.Fill({ color: '#333333' }),
+                    stroke: new ol.style.Stroke({ color: '#ffffff', width: 3 }),
+                    offsetY: -5
+                })
+            });
+        }
+
+        // По умолчанию
+        return new ol.style.Style({
+            fill: new ol.style.Fill({ color: '#f8f4f0' }),
+            stroke: new ol.style.Stroke({ color: '#cccccc', width: 1 })
+        });
+    }
+
+    /**
+     * Создание базового слоя (растр или вектор)
+     */
+    function createBaseLayer() {
+        var hasTiles = kolchuginoMapData.tilesUrl && kolchuginoMapData.tilesUrl.length > 0;
+        var minZoom = parseInt(kolchuginoMapData.minZoom) || 12;
+        var maxZoom = parseInt(kolchuginoMapData.maxZoom) || 20;
+
+        console.log('[map] Creating base layer, mode:', tileMode, 'hasTiles:', hasTiles);
+
+        if (tileMode === 'vector' && hasTiles) {
+            // Векторные тайлы PBF/MVT
+            var vectorTileSource = new ol.source.VectorTile({
+                format: new ol.format.MVT(),
+                url: kolchuginoMapData.tilesUrl + '{z}/{x}/{y}.pbf',
+                minZoom: minZoom,
+                maxZoom: maxZoom,
+                tileGrid: ol.tilegrid.createXYZ({
+                    minZoom: minZoom,
+                    maxZoom: maxZoom
+                })
+            });
+
+            var vectorTileLayer = new ol.layer.VectorTile({
+                source: vectorTileSource,
+                style: getVectorTileStyle,
+                zIndex: 0
+            });
+
+            console.log('[map] Vector tile layer created');
+            return vectorTileLayer;
+        } else {
+            // Растровые тайлы PNG (или OSM если нет локальных)
+            var rasterSource;
+            if (hasTiles) {
+                rasterSource = new ol.source.XYZ({
+                    url: kolchuginoMapData.tilesUrl + '{z}/{x}/{y}.png',
+                    minZoom: minZoom,
+                    maxZoom: maxZoom
+                });
+                console.log('[map] Raster tile layer created (local PNG)');
+            } else {
+                rasterSource = new ol.source.OSM();
+                console.log('[map] Using OSM raster tiles (no local tiles)');
+            }
+
+            var rasterTileLayer = new ol.layer.Tile({
+                source: rasterSource,
+                zIndex: 0
+            });
+
+            return rasterTileLayer;
+        }
+    }
+
     /**
      * Инициализация карты
      */
@@ -42,31 +245,12 @@
             return;
         }
 
-        var hasTiles = kolchuginoMapData.tilesUrl && kolchuginoMapData.tilesUrl.length > 0;
-
-        console.log('[map] hasTiles:', hasTiles, 'tilesUrl:', kolchuginoMapData.tilesUrl);
+        console.log('[map] tileMode:', tileMode);
         console.log('[map] minZoom:', kolchuginoMapData.minZoom, 'maxZoom:', kolchuginoMapData.maxZoom);
         console.log('[map] defaultZoom:', kolchuginoMapData.defaultZoom);
 
-        var tileSource;
-        if (hasTiles) {
-            tileSource = new ol.source.XYZ({
-                url: kolchuginoMapData.tilesUrl + '{z}/{x}/{y}.png',
-                minZoom: kolchuginoMapData.minZoom || 12,
-                maxZoom: kolchuginoMapData.maxZoom || 15
-            });
-            console.log('[map] Tile URL:', tileSource.getUrls ? tileSource.getUrls() : 'N/A');
-        } else {
-            tileSource = new ol.source.OSM();
-            console.log('[map] Using OSM tiles (no local tiles)');
-        }
-
-        // Offline tile слой - внизу (zIndex: 0)
-        tileLayer = new ol.layer.Tile({
-            source: tileSource,
-            zIndex: 0
-        });
-        console.log('[map] Tile layer created, zIndex:', tileLayer.getZIndex());
+        // Создаём базовый слой в зависимости от режима
+        baseLayer = createBaseLayer();
 
         // Векторный слой для маркеров (будет сверху тайлов)
         vectorSource = new ol.source.Vector();
@@ -86,12 +270,12 @@
             ]),
             zoom: parseInt(kolchuginoMapData.defaultZoom) || 13,
             minZoom: parseInt(kolchuginoMapData.minZoom) || 12,
-            maxZoom: parseInt(kolchuginoMapData.maxZoom) || 15
+            maxZoom: parseInt(kolchuginoMapData.maxZoom) || 20
         };
 
         map = new ol.Map({
             target: 'kolchugino-map',
-            layers: [tileLayer, vectorLayer],
+            layers: [baseLayer, vectorLayer],
             view: new ol.View(viewConfig),
             controls: ol.control.defaults.defaults().extend([
                 new ol.control.ScaleLine({
@@ -293,15 +477,15 @@
      * Переключение на онлайн тайлы OSM
      */
     function addOnlineTiles() {
-        if (tileLayer) {
-            map.removeLayer(tileLayer);
+        if (baseLayer) {
+            map.removeLayer(baseLayer);
         }
         var onlineSource = new ol.source.OSM();
-        tileLayer = new ol.layer.Tile({
+        baseLayer = new ol.layer.Tile({
             source: onlineSource,
             zIndex: 0
         });
-        map.getLayers().insertAt(0, tileLayer);
+        map.getLayers().insertAt(0, baseLayer);
         // Снимаем ограничение extent для онлайн режима, сохраняя текущий вид
         var currentCenter = map.getView().getCenter();
         var currentZoom = map.getView().getZoom();
@@ -316,6 +500,27 @@
     }
 
     /**
+     * Переключение между векторным и растровым режимом оффлайн-тайлов
+     */
+    function switchTileMode() {
+        // Переключаем режим
+        tileMode = tileMode === 'vector' ? 'raster' : 'vector';
+        localStorage.setItem('kolchugino_tile_mode', tileMode);
+        console.log('[map] Switched tile mode to:', tileMode);
+
+        // Удаляем старый базовый слой
+        if (baseLayer) {
+            map.removeLayer(baseLayer);
+        }
+
+        // Создаём новый базовый слой
+        baseLayer = createBaseLayer();
+        map.getLayers().insertAt(0, baseLayer);
+
+        updateTileModeButton();
+    }
+
+    /**
      * Переключение онлайн/оффлайн режима
      */
     function toggleTileMode() {
@@ -324,26 +529,20 @@
             addOnlineTiles();
         } else {
             console.log('[map] Switching to OFFLINE tiles, tilesUrl:', kolchuginoMapData.tilesUrl);
-            map.removeLayer(tileLayer);
-            var offlineSource = new ol.source.XYZ({
-                url: kolchuginoMapData.tilesUrl + '{z}/{x}/{y}.png',
-                minZoom: kolchuginoMapData.minZoom || 12,
-                maxZoom: kolchuginoMapData.maxZoom || 15
-            });
-            tileLayer = new ol.layer.Tile({
-                source: offlineSource,
-                zIndex: 0
-            });
-            map.getLayers().insertAt(0, tileLayer);
+            if (baseLayer) {
+                map.removeLayer(baseLayer);
+            }
+            baseLayer = createBaseLayer();
+            map.getLayers().insertAt(0, baseLayer);
             
-            // ИСПРАВЛЕНИЕ: Обновляем View при возврате в оффлайн
+            // Обновляем View при возврате в оффлайн
             var currentCenter = map.getView().getCenter();
             var currentZoom = map.getView().getZoom();
             var newView = new ol.View({
                 center: currentCenter,
                 zoom: currentZoom,
                 minZoom: parseInt(kolchuginoMapData.minZoom) || 12,
-                maxZoom: parseInt(kolchuginoMapData.maxZoom) || 15
+                maxZoom: parseInt(kolchuginoMapData.maxZoom) || 20
             });
             map.setView(newView);
             
@@ -352,15 +551,6 @@
             console.log('  minZoom:', newView.getMinZoom());
             console.log('  maxZoom:', newView.getMaxZoom());
             
-            offlineSource.on('tileloadstart', function(e) {
-                console.log('[map] Offline tile load start:', e.tile.src_);
-            });
-            offlineSource.on('tileloadend', function(e) {
-                console.log('[map] Offline tile load end:', e.tile.src_);
-            });
-            offlineSource.on('tileloaderror', function(e) {
-                console.error('[map] Offline tile load error:', e.tile.src_);
-            });
             isOffline = true;
         }
         updateOfflineButton();
@@ -376,6 +566,21 @@
             btn.setAttribute('title', 'Переключить на онлайн режим');
         } else {
             btn.setAttribute('title', 'Переключить на оффлайн режим');
+        }
+    }
+
+    /**
+     * Обновление текста кнопки переключения режима тайлов
+     */
+    function updateTileModeButton() {
+        var btn = document.getElementById('kolchugino-map-tilemode-btn');
+        if (!btn) return;
+        if (tileMode === 'vector') {
+            btn.setAttribute('title', 'Текущий режим: векторный (PBF). Нажмите для переключения на растровый (PNG)');
+            btn.textContent = 'Вектор';
+        } else {
+            btn.setAttribute('title', 'Текущий режим: растровый (PNG). Нажмите для переключения на векторный (PBF)');
+            btn.textContent = 'Растр';
         }
     }
 
@@ -658,6 +863,13 @@
         if (offlineBtn) {
             offlineBtn.addEventListener('click', toggleTileMode);
         }
+
+        // Переключение режима тайлов (вектор/растр)
+        var tileModeBtn = document.getElementById('kolchugino-map-tilemode-btn');
+        if (tileModeBtn) {
+            tileModeBtn.addEventListener('click', switchTileMode);
+            updateTileModeButton();
+        }
     }
 
     /**
@@ -709,6 +921,7 @@
             renderFilters();
             renderLegend();
             updateOfflineButton();
+            updateTileModeButton();
             initEventHandlers();
         });
     } else {
@@ -716,6 +929,7 @@
         renderFilters();
         renderLegend();
         updateOfflineButton();
+        updateTileModeButton();
         initEventHandlers();
     }
 
