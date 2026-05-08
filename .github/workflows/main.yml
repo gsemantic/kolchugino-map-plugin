@@ -132,7 +132,7 @@ jobs:
           echo "Generating tiles from zoom $MIN_ZOOM to $MAX_ZOOM..."
           
           # Конвертируем region.osm.pbf в OSM XML, затем в GeoJSON (аналогично предыдущему шагу)
-          osmium cat region.osm.pbf -o region.osm
+          osmium cat region.osm.pbf -o region.osm --overwrite
           
           mkdir -p region_layers
           
