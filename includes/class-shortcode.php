@@ -125,6 +125,12 @@ class KOLCHUGINO_MAP_Shortcode {
 						title="<?php _e( 'Оффлайн режим', 'kolchugino-map' ); ?>">
 						<span class="dashicons dashicons-download"></span>
 					</button>
+					<button type="button"
+						id="kolchugino-map-tilemode-btn"
+						class="kolchugino-action-btn"
+						title="<?php _e( 'Режим тайлов: векторный (PBF)', 'kolchugino-map' ); ?>">
+						<span class="dashicons dashicons-admin-site"></span>
+					</button>
 					<?php endif; ?>
 				</div>
 			</div>
