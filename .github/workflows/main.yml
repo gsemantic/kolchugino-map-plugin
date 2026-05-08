@@ -111,7 +111,7 @@ jobs:
           done
 
           # Объединяем все GeoJSON файлы в один
-          python3 -c 'import json, os; merged = {"type": "FeatureCollection", "features": []}; [merged["features"].extend(json.load(open(os.path.join("osm_layers", fn), "r", encoding="utf-8")).get("features", [])) for fn in os.listdir("osm_layers") if fn.endswith(".geojson") and json.load(open(os.path.join("osm_layers", fn), "r", encoding="utf-8")).get("type") == "FeatureCollection"]; json.dump(merged, open("boundary.geojson", "w", encoding="utf-8"), ensure_ascii=False, indent=2); print(f"Merged {len(merged[\"features\"])} features")'
+          python3 scripts/merge_layers.py
 
           # Поиск района в GeoJSON
           export DISTRICT_NAME="$DISTRICT_NAME" && python3 scripts/find_district.py
