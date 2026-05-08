@@ -131,21 +131,22 @@ jobs:
           
           echo "Generating tiles from zoom $MIN_ZOOM to $MAX_ZOOM..."
           
+          # Конвертируем region.osm.pbf в GeoJSON для совместимости с tippecanoe
+          ogr2ogr -f GeoJSON region.geojson region.osm.pbf
+          
+          # Создаем тайлы с использованием tippecanoe
           tippecanoe -zg --projection=EPSG:3857 \
-            -o map.pbf \
-            --named-layer=boundaries:district.geojson \
-            --named-layer=roads:region.osm.pbf \
-            --named-layer=buildings:region.osm.pbf \
-            --named-layer=places:region.osm.pbf \
-            -l${{ github.event.inputs.district_name || 'Кольчугинский район' }} \
-            --force
+            -o map.mbtiles \
+            -l boundaries district.geojson \
+            -l roads region.geojson \
+            -l buildings region.geojson \
+            -l places region.geojson \
+            --force \
+            -Z$MIN_ZOOM -z$MAX_ZOOM
           
           mkdir -p tiles
           
-          # Конвертируем PBF в MBTiles сначала
-          tippecanoe --force -o map.mbtiles map.pbf
-          
-          # Затем используем mb-util для извлечения тайлов из MBTiles
+          # Используем mb-util для извлечения тайлов из MBTiles
           mb-util --image_format=pbf map.mbtiles tiles/
           
           echo "Tiles generated successfully"
