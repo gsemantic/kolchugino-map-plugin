@@ -184,6 +184,8 @@ jobs:
             --force \
             -Z$MIN_ZOOM -z$MAX_ZOOM
           
+          # Очищаем старую папку с тайлами и создаем новую
+          rm -rf tiles/
           mkdir -p tiles
           
           # Используем mb-util для извлечения тайлов из MBTiles
