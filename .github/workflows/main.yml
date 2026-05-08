@@ -49,7 +49,7 @@ jobs:
           echo "Downloading OSM data for Vladimir Region via Overpass API..."
           
           cat > overpass-query.ql << 'QUERYEOF'
-          [out:xml][timeout:180];
+          [out:xml][timeout:300];
           (
             way["highway"](55.5,38.0,56.8,42.5);
             node["place"](55.5,38.0,56.8,42.5);
@@ -59,26 +59,53 @@ jobs:
           out body;
           QUERYEOF
           
-          curl -s -X POST \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            --data-urlencode "data@overpass-query.ql" \
-            -o region.osm \
-            "https://overpass-api.de/api/interpreter"
+          # Retry logic for Overpass API (up to 3 attempts with delays)
+          MAX_RETRIES=3
+          RETRY_COUNT=0
+          SUCCESS=false
           
-          if [ ! -f region.osm ] || [ ! -s region.osm ]; then
-            echo "::error::Overpass API returned empty response"
-            exit 1
-          fi
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$SUCCESS" = "false" ]; do
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            echo "Attempt $RETRY_COUNT of $MAX_RETRIES..."
+            
+            curl -s -X POST \
+              -H "Content-Type: application/x-www-form-urlencoded" \
+              --data-urlencode "data@overpass-query.ql" \
+              -o region.osm \
+              "https://overpass-api.de/api/interpreter"
+            
+            if [ -f region.osm ] && [ -s region.osm ]; then
+              # Check if response contains HTML error page
+              if ! head -c 200 region.osm | grep -qi "<html"; then
+                SUCCESS=true
+                echo "Download successful!"
+              else
+                echo "Attempt $RETRY_COUNT failed: Server returned HTML error"
+                if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                  echo "Waiting 30 seconds before retry..."
+                  sleep 30
+                fi
+              fi
+            else
+              echo "Attempt $RETRY_COUNT failed: Empty response"
+              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                echo "Waiting 30 seconds before retry..."
+                sleep 30
+              fi
+            fi
+          done
           
-          # Check if response contains HTML error page
-          if head -c 200 region.osm | grep -qi "<html"; then
-            echo "::error::Overpass API returned HTML error page:"
-            cat region.osm
+          if [ "$SUCCESS" = "false" ]; then
+            echo "::error::Overpass API failed after $MAX_RETRIES attempts"
+            if [ -f region.osm ]; then
+              echo "Last response:"
+              cat region.osm
+            fi
             exit 1
           fi
           
           echo "Response size: $(du -h region.osm | cut -f1)"
-          osmium cat region.osm -o region.osm.pbf
+          osmium cat region.osm -o region.osm.pbf --overwrite
           echo "PBF size: $(du -h region.osm.pbf | cut -f1)"
 
       - name: Extract District Boundary
