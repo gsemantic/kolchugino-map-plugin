@@ -13,8 +13,10 @@
     var baseLayer = null;
     var isOffline = true;
     var popup = null;
-    // Режим тайлов: 'vector' (PBF) или 'raster' (PNG). По умолчанию vector
-    var tileMode = localStorage.getItem('kolchugino_tile_mode') || 'vector';
+    // Режим тайлов: 'vector' (PBF) или 'raster' (PNG). По умолчанию берётся из настроек плагина
+    var tileMode = (typeof kolchuginoMapData !== 'undefined' && kolchuginoMapData.tileMode) 
+        ? kolchuginoMapData.tileMode 
+        : (localStorage.getItem('kolchugino_tile_mode') || 'vector');
 
     // Цвета категорий
     var CATEGORY_COLORS = {
@@ -518,6 +520,17 @@
         map.getLayers().insertAt(0, baseLayer);
 
         updateTileModeButton();
+        
+        // Обновляем View для применения новых лимитов зума
+        var currentCenter = map.getView().getCenter();
+        var currentZoom = map.getView().getZoom();
+        var newView = new ol.View({
+            center: currentCenter,
+            zoom: currentZoom,
+            minZoom: parseInt(kolchuginoMapData.minZoom) || 12,
+            maxZoom: parseInt(kolchuginoMapData.maxZoom) || 20
+        });
+        map.setView(newView);
     }
 
     /**

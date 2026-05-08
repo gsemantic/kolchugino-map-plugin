@@ -77,6 +77,15 @@ class KOLCHUGINO_MAP_Settings {
 				'default'           => 14
 			)
 		);
+		register_setting(
+			'kolchugino_map_settings_group',
+			'kolchugino_map_tile_mode',
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => 'sanitize_text_field',
+				'default'           => 'vector'
+			)
+		);
 	}
 
 	public static function get_default_zoom() {
@@ -118,6 +127,12 @@ class KOLCHUGINO_MAP_Settings {
 		$zoom = get_option( 'kolchugino_map_offline_max_zoom', 14 );
 		kolchugino_log()->info( 'Retrieved offline max zoom', array( 'value' => (int)$zoom ) );
 		return (int) $zoom;
+	}
+
+	public static function get_tile_mode() {
+		$mode = get_option( 'kolchugino_map_tile_mode', 'vector' );
+		kolchugino_log()->info( 'Retrieved tile mode', array( 'mode' => $mode ) );
+		return $mode;
 	}
 
 	public static function render_settings_page() {
@@ -220,6 +235,24 @@ class KOLCHUGINO_MAP_Settings {
 							</p>
 						</td>
 					</tr>
+					<tr>
+						<th scope="row">
+							<label for="kolchugino_map_tile_mode"><?php _e( 'Режим тайлов', 'kolchugino-map' ); ?></label>
+						</th>
+						<td>
+							<select id="kolchugino_map_tile_mode" name="kolchugino_map_tile_mode">
+								<option value="vector" <?php selected( self::get_tile_mode(), 'vector' ); ?>>
+									<?php _e( 'Векторный (PBF)', 'kolchugino-map' ); ?>
+								</option>
+								<option value="raster" <?php selected( self::get_tile_mode(), 'raster' ); ?>>
+									<?php _e( 'Растровый (PNG)', 'kolchugino-map' ); ?>
+								</option>
+							</select>
+							<p class="description">
+								<?php _e( 'Выберите формат оффлайн-тайлов: векторный (меньший размер, лучшее качество) или растровый (быстрее рендеринг).', 'kolchugino-map' ); ?>
+							</p>
+						</td>
+					</tr>
 				</table>
 				<?php submit_button(); ?>
 			</form>
@@ -232,6 +265,10 @@ class KOLCHUGINO_MAP_Settings {
 					<li><?php _e( 'Нажмите "Run workflow" и укажите параметры зума', 'kolchugino-map' ); ?></li>
 					<li><?php _e( 'После генерации скопируйте URL из артефактов в поле выше', 'kolchugino-map' ); ?></li>
 				</ol>
+				<p class="description" style="margin-top: 15px;">
+					<strong><?php _e( 'Примечание:', 'kolchugino-map' ); ?></strong> 
+					<?php _e( 'Векторные тайлы (PBF) генерируются автоматически и имеют меньший размер. Растровые тайлы (PNG) необходимо загрузить отдельно, если вы хотите использовать растровый режим.', 'kolchugino-map' ); ?>
+				</p>
 			</div>
 		</div>
 		<?php
