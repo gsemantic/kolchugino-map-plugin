@@ -131,16 +131,41 @@ jobs:
           
           echo "Generating tiles from zoom $MIN_ZOOM to $MAX_ZOOM..."
           
-          # Конвертируем region.osm.pbf в GeoJSON для совместимости с tippecanoe
-          ogr2ogr -f GeoJSON region.geojson region.osm.pbf
+          # Конвертируем region.osm.pbf в OSM XML, затем в GeoJSON (аналогично предыдущему шагу)
+          osmium cat region.osm.pbf -o region.osm
+          
+          mkdir -p region_layers
+          
+          # Конвертируем каждый слой отдельно
+          for layer in points lines multilinestrings multipolygons other_relations; do
+            if ogr2ogr -f GeoJSON "region_layers/${layer}.geojson" region.osm "$layer" 2>/dev/null; then
+              echo "Converted region layer: $layer"
+            fi
+          done
+          
+          # Объединяем все слои региона в один файл
+          python3 -c "
+import json, os
+merged = {'type': 'FeatureCollection', 'features': []}
+for fn in os.listdir('region_layers'):
+    if fn.endswith('.geojson'):
+        with open(os.path.join('region_layers', fn), 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            features = data.get('features', [])
+            merged['features'].extend(features)
+            print(f'Added {len(features)} features from {fn}')
+with open('region_combined.geojson', 'w', encoding='utf-8') as f:
+    json.dump(merged, f, ensure_ascii=False, indent=2)
+print(f'Merged {len(merged[\"features\"])} features into region_combined.geojson')
+"
           
           # Создаем тайлы с использованием tippecanoe
           tippecanoe -zg --projection=EPSG:3857 \
             -o map.mbtiles \
             -l boundaries district.geojson \
-            -l roads region.geojson \
-            -l buildings region.geojson \
-            -l places region.geojson \
+            -l roads region_combined.geojson \
+            -l buildings region_combined.geojson \
+            -l places region_combined.geojson \
             --force \
             -Z$MIN_ZOOM -z$MAX_ZOOM
           
