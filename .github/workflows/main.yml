@@ -83,6 +83,7 @@ jobs:
 
       - name: Extract District Boundary
         id: extract_boundary
+        # Попытка #5: Полная отладка, конвертация через osmium cat -> OSM -> ogr2ogr
         run: |
           DISTRICT_NAME="${{ github.event.inputs.district_name || 'Кольчугинский район' }}"
           echo "Searching for boundary: $DISTRICT_NAME"
