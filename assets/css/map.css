@@ -272,3 +272,14 @@
         font-size: 9px;
     }
 }
+
+/* Кнопка переключения режима тайлов */
+#kolchugino-map-tilemode-btn {
+    font-size: 11px;
+    padding: 4px 8px;
+    min-width: 60px;
+}
+
+#kolchugino-map-tilemode-btn .dashicons {
+    display: none;
+}
