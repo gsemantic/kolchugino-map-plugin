@@ -51,10 +51,13 @@ jobs:
           cat > overpass-query.ql << 'QUERYEOF'
           [out:xml][timeout:300];
           (
-            way["highway"](55.5,38.0,56.8,42.5);
-            node["place"](55.5,38.0,56.8,42.5);
-            way["building"](55.5,38.0,56.8,42.5);
-            relation["boundary"="administrative"]["admin_level"="4"]["name"="Владимирская область"];
+            // Загружаем все дороги, здания и места в расширенной области вокруг Кольчугино
+            way["highway"](56.0,38.8,56.6,40.0);
+            node["place"](56.0,38.8,56.6,40.0);
+            way["building"](56.0,38.8,56.6,40.0);
+            
+            // Загружаем административные границы всех уровней для Владимирской области
+            relation["boundary"="administrative"]["admin_level"~"4|5|6|7"]["name"~"Владимир|Кольчугин"];
           );
           out body;
           QUERYEOF
@@ -144,8 +147,16 @@ jobs:
           export DISTRICT_NAME="$DISTRICT_NAME" && python3 scripts/find_district_boundary.py
 
           if [ ! -f district.geojson ] || [ ! -s district.geojson ]; then
-            echo "::error::District boundary not found"
-            exit 1
+            echo "::warning::District boundary not found, using full region data"
+            # Если район не найден, используем все границы из файла
+            if [ -f osm_layers/multipolygons.geojson ]; then
+              cp osm_layers/multipolygons.geojson district.geojson
+            elif [ -f region_combined.geojson ]; then
+              cp region_combined.geojson district.geojson
+            else
+              echo "::error::No fallback data available"
+              exit 1
+            fi
           fi
 
           echo "district_file=district.geojson" >> $GITHUB_OUTPUT
