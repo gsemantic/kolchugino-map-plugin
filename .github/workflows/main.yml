@@ -99,77 +99,99 @@ jobs:
           
           # Convert PBF to OSM XML first
           osmium cat boundary.osm.pbf -o boundary.osm
+
+          # Создаем директорию для слоев
+          mkdir -p osm_layers
+
+          # Конвертируем каждый слой OSM отдельно в GeoJSON
+          for layer in points lines multilinestrings multipolygons other_relations; do
+            if ogr2ogr -f GeoJSON "osm_layers/${layer}.geojson" boundary.osm "$layer" 2>/dev/null; then
+              echo "Converted layer: $layer"
+            fi
+          done
+
+          # Объединяем все GeoJSON файлы в один
+          python3 << 'MERGEPY'
+          import json
+          import os
           
-          # Convert OSM XML to GeoJSON using ogr2ogr (from gdal-bin)
-          # OSM data in ogr2ogr is split into layers: points, lines, multilinestrings, multipolygons
-          # Boundaries (relations) are usually in 'multipolygons' layer
-          if ! ogr2ogr -f GeoJSON boundary.geojson boundary.osm multipolygons; then
-            echo "Warning: 'multipolygons' layer not found or empty, trying to convert all layers..."
-            ogr2ogr -f GeoJSON boundary.geojson boundary.osm
-          fi
+          merged = {"type": "FeatureCollection", "features": []}
           
-          # Use jq to find the matching district
+          for filename in os.listdir('osm_layers'):
+              if filename.endswith('.geojson'):
+                  filepath = os.path.join('osm_layers', filename)
+                  try:
+                      with open(filepath, 'r', encoding='utf-8') as f:
+                          data = json.load(f)
+                      if data.get('type') == 'FeatureCollection':
+                          merged['features'].extend(data.get('features', []))
+                  except Exception as e:
+                      pass
+          
+          with open('boundary.geojson', 'w', encoding='utf-8') as f:
+              json.dump(merged, f, ensure_ascii=False, indent=2)
+          
+          print(f"Merged {len(merged['features'])} features from all layers")
+MERGEPY
+
+          
+          # Поиск района в GeoJSON
           python3 << 'PYEOF'
           import json
           import sys
           import os
 
           district_name = os.environ.get('DISTRICT_NAME', 'Кольчугинский район')
-          
+
           if not os.path.exists('boundary.geojson'):
               print("Error: boundary.geojson not found", file=sys.stderr)
               sys.exit(1)
 
           with open('boundary.geojson', 'r', encoding='utf-8') as f:
               data = json.load(f)
-          
+
           found = False
-          if data.get('type') == 'FeatureCollection':
-              print(f"Found {len(data.get('features', []))} features in GeoJSON")
-              for feature in data.get('features', []):
-                  props = feature.get('properties', {})
-                  # Check multiple possible property names for district name
-                  possible_names = [
-                      props.get('name', ''),
-                      props.get('NAME', ''),
-                      props.get('name:ru', ''),
-                      props.get('name:en', ''),
-                      props.get('official:name', ''),
-                      props.get('admin_level', '')
-                  ]
-                  for name in possible_names:
-                      if not name:
-                          continue
-                      print(f"Checking feature with name: '{name}'")
-                      if district_name.lower() in str(name).lower():
-                          found = True
-                          with open('district.geojson', 'w', encoding='utf-8') as out:
-                              json.dump(feature, out, ensure_ascii=False, indent=2)
-                          print(f"Found district: {name}")
-                          break
-                  if found:
+          features = data.get('features', [])
+          print(f"Found {len(features)} features in GeoJSON", file=sys.stderr)
+
+          all_names = []
+
+          for feature in features:
+              props = feature.get('properties', {})
+              
+              # Проверяем все возможные поля с именем
+              name_fields = ['name', 'NAME', 'name:ru', 'name:en', 'official:name', 'addr:district', 'boundary']
+              
+              feature_name = None
+              for field in name_fields:
+                  if field in props and props[field]:
+                      feature_name = props[field]
+                      all_names.append(feature_name)
                       break
-          
+              
+              if feature_name:
+                  print(f"Checking feature: '{feature_name}'", file=sys.stderr)
+                  
+              if feature_name and district_name.lower() in str(feature_name).lower():
+                  found = True
+                  with open('district.geojson', 'w', encoding='utf-8') as out:
+                      json.dump({"type": "FeatureCollection", "features": [feature]}, out, ensure_ascii=False, indent=2)
+                  print(f"Found district: {feature_name}", file=sys.stderr)
+                  break
+
           if not found:
               print(f"District '{district_name}' not found in GeoJSON", file=sys.stderr)
-              # Print all found names for debugging
-              if data.get('type') == 'FeatureCollection':
-                  names = []
-                  for f in data.get('features', []):
-                      props = f.get('properties', {})
-                      for key in ['name', 'NAME', 'name:ru', 'name:en', 'official:name']:
-                          if props.get(key):
-                              names.append(props.get(key))
-                              break
-                  print(f"Available names: {names}", file=sys.stderr)
+              print(f"Available names: {all_names}", file=sys.stderr)
+              if features:
+                  print(f"Sample properties: {json.dumps(features[0].get('properties', {}), ensure_ascii=False)}", file=sys.stderr)
               sys.exit(1)
           PYEOF
-          
+
           if [ ! -f district.geojson ] || [ ! -s district.geojson ]; then
             echo "::error::District boundary not found"
             exit 1
           fi
-          
+
           echo "district_file=district.geojson" >> $GITHUB_OUTPUT
 
       - name: Generate Map Tiles
