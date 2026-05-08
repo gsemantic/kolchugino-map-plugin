@@ -141,7 +141,12 @@ jobs:
             --force
           
           mkdir -p tiles
-          python3 -m mbutil.mapbox.pbf2dir map.pbf tiles/
+          
+          # Конвертируем PBF в MBTiles сначала
+          tippecanoe --force -o map.mbtiles map.pbf
+          
+          # Затем используем mb-util для извлечения тайлов из MBTiles
+          mb-util --image_format=pbf map.mbtiles tiles/
           
           echo "Tiles generated successfully"
           ls -lh tiles/
