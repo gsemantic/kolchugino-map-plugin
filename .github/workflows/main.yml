@@ -112,29 +112,28 @@ jobs:
 
           # Объединяем все GeoJSON файлы в один
           python3 << 'MERGEPY'
-          import json
-          import os
-          
-          merged = {"type": "FeatureCollection", "features": []}
-          
-          for filename in os.listdir('osm_layers'):
-              if filename.endswith('.geojson'):
-                  filepath = os.path.join('osm_layers', filename)
-                  try:
-                      with open(filepath, 'r', encoding='utf-8') as f:
-                          data = json.load(f)
-                      if data.get('type') == 'FeatureCollection':
-                          merged['features'].extend(data.get('features', []))
-                  except Exception as e:
-                      pass
-          
-          with open('boundary.geojson', 'w', encoding='utf-8') as f:
-              json.dump(merged, f, ensure_ascii=False, indent=2)
-          
-          print(f"Merged {len(merged['features'])} features from all layers")
+import json
+import os
+
+merged = {"type": "FeatureCollection", "features": []}
+
+for filename in os.listdir('osm_layers'):
+    if filename.endswith('.geojson'):
+        filepath = os.path.join('osm_layers', filename)
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if data.get('type') == 'FeatureCollection':
+                merged['features'].extend(data.get('features', []))
+        except Exception as e:
+            pass
+
+with open('boundary.geojson', 'w', encoding='utf-8') as f:
+    json.dump(merged, f, ensure_ascii=False, indent=2)
+
+print(f"Merged {len(merged['features'])} features from all layers")
 MERGEPY
 
-          
           # Поиск района в GeoJSON
           python3 << 'PYEOF'
           import json
