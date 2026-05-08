@@ -1,4 +1,4 @@
-```yaml
-# Configuration file for GitHub Actions workflow
-!.github/workflows/main.yml
+```
+# Configuration and workflow files
+.github/workflows/main.yml
 ```
