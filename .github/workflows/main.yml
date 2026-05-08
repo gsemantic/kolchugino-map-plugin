@@ -144,20 +144,7 @@ jobs:
           done
           
           # Объединяем все слои региона в один файл
-          python3 -c "
-import json, os
-merged = {'type': 'FeatureCollection', 'features': []}
-for fn in os.listdir('region_layers'):
-    if fn.endswith('.geojson'):
-        with open(os.path.join('region_layers', fn), 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            features = data.get('features', [])
-            merged['features'].extend(features)
-            print(f'Added {len(features)} features from {fn}')
-with open('region_combined.geojson', 'w', encoding='utf-8') as f:
-    json.dump(merged, f, ensure_ascii=False, indent=2)
-print(f'Merged {len(merged[\"features\"])} features into region_combined.geojson')
-"
+          python3 scripts/merge_region_layers.py
           
           # Создаем тайлы с использованием tippecanoe
           tippecanoe -zg --projection=EPSG:3857 \
