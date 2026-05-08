@@ -11,6 +11,7 @@
     var allObjects = [];
     var currentFilter = 'all';
     var baseLayer = null;
+    var tileSource = null; // Глобальная переменная для источника тайлов
     var isOffline = true;
     var popup = null;
     // Режим тайлов: 'vector' (PBF) или 'raster' (PNG). По умолчанию берётся из настроек плагина
@@ -195,7 +196,7 @@
 
         if (tileMode === 'vector' && hasTiles) {
             // Векторные тайлы PBF/MVT
-            var vectorTileSource = new ol.source.VectorTile({
+            tileSource = new ol.source.VectorTile({
                 format: new ol.format.MVT(),
                 url: kolchuginoMapData.tilesUrl + '{z}/{x}/{y}.pbf',
                 minZoom: minZoom,
@@ -207,7 +208,7 @@
             });
 
             var vectorTileLayer = new ol.layer.VectorTile({
-                source: vectorTileSource,
+                source: tileSource,
                 style: getVectorTileStyle,
                 zIndex: 0
             });
@@ -218,19 +219,19 @@
             // Растровые тайлы PNG (или OSM если нет локальных)
             var rasterSource;
             if (hasTiles) {
-                rasterSource = new ol.source.XYZ({
+                tileSource = new ol.source.XYZ({
                     url: kolchuginoMapData.tilesUrl + '{z}/{x}/{y}.png',
                     minZoom: minZoom,
                     maxZoom: maxZoom
                 });
                 console.log('[map] Raster tile layer created (local PNG)');
             } else {
-                rasterSource = new ol.source.OSM();
+                tileSource = new ol.source.OSM();
                 console.log('[map] Using OSM raster tiles (no local tiles)');
             }
 
             var rasterTileLayer = new ol.layer.Tile({
-                source: rasterSource,
+                source: tileSource,
                 zIndex: 0
             });
 
