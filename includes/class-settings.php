@@ -113,6 +113,12 @@ class KOLCHUGINO_MAP_Settings {
 
 	public static function get_offline_tiles_url() {
 		$url = get_option( 'kolchugino_map_offline_tiles_url', '' );
+		
+		// Если URL не задан, используем путь по умолчанию к папке tiles внутри плагина
+		if ( empty( $url ) ) {
+			$url = KOLCHUGINO_MAP_PLUGIN_URL . 'tiles/';
+		}
+		
 		kolchugino_log()->info( 'Retrieved offline tiles URL', array( 'url' => $url ) );
 		return $url;
 	}
@@ -192,12 +198,15 @@ class KOLCHUGINO_MAP_Settings {
 								name="kolchugino_map_offline_tiles_url"
 								value="<?php echo esc_attr( self::get_offline_tiles_url() ); ?>"
 								class="regular-text"
-								placeholder="https://username.github.io/repo/offline-tiles/" />
+								placeholder="<?php echo esc_attr( KOLCHUGINO_MAP_PLUGIN_URL . 'tiles/' ); ?>" />
 							<p class="description">
-								<?php _e( 'URL для загрузки тайлов в оффлайн-режиме. Оставьте пустым для использования OSM.', 'kolchugino-map' ); ?>
+								<?php _e( 'URL для загрузки тайлов в оффлайн-режиме. Оставьте пустым для использования пути по умолчанию.', 'kolchugino-map' ); ?>
 								<br />
-								<strong><?php _e( 'Пример:', 'kolchugino-map' ); ?></strong> 
-								<code>https://yourusername.github.io/kolchugino-map/offline-tiles/</code>
+								<strong><?php _e( 'Путь по умолчанию:', 'kolchugino-map' ); ?></strong> 
+								<code><?php echo esc_html( KOLCHUGINO_MAP_PLUGIN_URL . 'tiles/' ); ?></code>
+								<br />
+								<strong><?php _e( 'Пример внешнего URL:', 'kolchugino-map' ); ?></strong> 
+								<code>https://yourusername.github.io/kolchugino-map/tiles/</code>
 							</p>
 						</td>
 					</tr>
