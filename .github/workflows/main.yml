@@ -169,57 +169,97 @@ jobs:
           
           echo "Generating tiles from zoom $MIN_ZOOM to $MAX_ZOOM..."
           
-          # Конвертируем region.osm.pbf в OSM XML для ogr2ogr
-          osmium cat region.osm.pbf -o region.osm --overwrite
-          
           mkdir -p region_layers
           
-          # Конвертируем каждый слой отдельно с явным указанием формата OSM
+          # --- ЭТАП 1: Прямая выгрузка всех слоев из PBF через ogr2ogr ---
+          echo "📥 Extracting OSM layers directly from PBF..."
+          
           for layer in points lines multilinestrings multipolygons other_relations; do
-            if ogr2ogr -f GeoJSON -nlt GEOMETRY "region_layers/${layer}.geojson" OSM:"region.osm" "$layer" 2>/dev/null; then
-              count=$(python3 -c "import json; print(len(json.load(open('region_layers/${layer}.geojson'))['features']))")
-              echo "Converted region layer: $layer (features: $count)"
+            echo "Extracting layer: $layer"
+            if ogr2ogr -f GeoJSON -t_srs EPSG:4326 "region_layers/${layer}.geojson" "$OSM_FILE" "$layer" -skipfailures 2>&1; then
+              if [ -f "region_layers/${layer}.geojson" ]; then
+                count=$(python3 -c "import json; print(len(json.load(open('region_layers/${layer}.geojson')).get('features', [])))")
+                echo "  ✓ $layer: $count features"
+              else
+                echo "  ⚠ $layer: file not created"
+                echo '{"type":"FeatureCollection","features":[]}' > "region_layers/${layer}.geojson"
+              fi
             else
-              echo "Warning: Failed to convert layer $layer"
+              echo "  ⚠ $layer: ogr2ogr failed, creating empty file"
               echo '{"type":"FeatureCollection","features":[]}' > "region_layers/${layer}.geojson"
             fi
           done
+
+          # --- ЭТАП 2: Фильтрация по тегам ---
+          echo "✂️ Filtering features by tags..."
           
-          # Фильтруем данные по типам объектов для каждого слоя
-          
-          # 1. Дороги (из lines)
-          if [ -f region_layers/lines.geojson ]; then
-            python3 -c "import json; data=json.load(open('region_layers/lines.geojson')); roads=[f for f in data.get('features',[]) if 'highway' in f.get('properties',{})]; json.dump({'type':'FeatureCollection','features':roads},open('region_layers/roads.geojson','w')); print(f'Extracted {len(roads)} road features')"
-          else
-            echo '{"type":"FeatureCollection","features":[]}' > region_layers/roads.geojson
-            echo "No lines layer found, created empty roads.geojson"
-          fi
-          
-          # 2. Здания (из multipolygons и других полигонов)
-          python3 -c "import json; features=[]; [features.extend([f for f in json.load(open(f'region_layers/{ln}.geojson')).get('features',[]) if 'building' in f.get('properties',{})]) for ln in ['multipolygons','other_relations'] if __import__('os').path.exists(f'region_layers/{ln}.geojson')]; json.dump({'type':'FeatureCollection','features':features},open('region_layers/buildings.geojson','w')); print(f'Total building features: {len(features)}')"
-          
-          # 3. Места (из points)
-          if [ -f region_layers/points.geojson ]; then
-            python3 -c "import json; data=json.load(open('region_layers/points.geojson')); places=[f for f in data.get('features',[]) if 'place' in f.get('properties',{})]; json.dump({'type':'FeatureCollection','features':places},open('region_layers/places.geojson','w')); print(f'Extracted {len(places)} place features')"
-          else
-            echo '{"type":"FeatureCollection","features":[]}' > region_layers/places.geojson
-            echo "No points layer found, created empty places.geojson"
-          fi
-          
-          # Диагностика: проверяем количество объектов в каждом слое
-          echo "=== Diagnostic: Feature counts ==="
-          for f in district.geojson region_layers/roads.geojson region_layers/buildings.geojson region_layers/places.geojson; do
+          # 1. Дороги (highway) из слоя lines
+          python3 << 'PYEOF'
+import json, os
+roads = []
+if os.path.exists('region_layers/lines.geojson'):
+    with open('region_layers/lines.geojson') as f:
+        data = json.load(f)
+        roads = [feat for feat in data.get('features', []) if 'highway' in feat.get('properties', {})]
+with open('region_layers/roads.geojson', 'w') as f:
+    json.dump({"type": "FeatureCollection", "features": roads}, f)
+print(f"  Roads extracted: {len(roads)}")
+PYEOF
+
+          # 2. Здания (building) из multipolygons и other_relations
+          python3 << 'PYEOF'
+import json, os
+buildings = []
+for lname in ['multipolygons', 'other_relations']:
+    fname = f'region_layers/{lname}.geojson'
+    if os.path.exists(fname):
+        with open(fname) as f:
+            data = json.load(f)
+            for feat in data.get('features', []):
+                if 'building' in feat.get('properties', {}):
+                    buildings.append(feat)
+with open('region_layers/buildings.geojson', 'w') as f:
+    json.dump({"type": "FeatureCollection", "features": buildings}, f)
+print(f"  Buildings extracted: {len(buildings)}")
+PYEOF
+
+          # 3. Места (place) из points
+          python3 << 'PYEOF'
+import json, os
+places = []
+if os.path.exists('region_layers/points.geojson'):
+    with open('region_layers/points.geojson') as f:
+        data = json.load(f)
+        places = [feat for feat in data.get('features', []) if 'place' in feat.get('properties', {})]
+with open('region_layers/places.geojson', 'w') as f:
+    json.dump({"type": "FeatureCollection", "features": places}, f)
+print(f"  Places extracted: {len(places)}")
+PYEOF
+
+          # --- ЭТАП 3: Диагностика ---
+          echo "=== Diagnostic: Final feature counts ==="
+          total=0
+          for f in region_layers/roads.geojson region_layers/buildings.geojson region_layers/places.geojson; do
             if [ -f "$f" ]; then
               count=$(python3 -c "import json; print(len(json.load(open('$f')).get('features', [])))")
-              echo "$f: $count features"
+              echo "  $f: $count features"
+              total=$((total + count))
             else
-              echo "$f: FILE NOT FOUND"
+              echo "  $f: FILE NOT FOUND"
             fi
           done
+          echo "  TOTAL: $total features"
           echo "==============================="
 
-          # Создаем тайлы с использованием tippecanoe
+          if [ "$total" -eq 0 ]; then
+            echo "❌ CRITICAL ERROR: No features found in any layer!"
+            exit 1
+          fi
+
+          # --- ЭТАП 4: Генерация тайлов ---
+          echo "🗺 Generating MBTiles with tippecanoe..."
           rm -f map.mbtiles
+          
           tippecanoe --projection=EPSG:3857 \
             -o map.mbtiles \
             -l boundaries district.geojson \
@@ -233,28 +273,27 @@ jobs:
             --detect-longitude-wraparound \
             --reorder \
             --read-parallel \
+            -v \
             2>&1 | tee tippecanoe.log
           
-          # Показываем статистику MBTiles
+          # --- ЭТАП 5: Проверка результата ---
           if [ -f map.mbtiles ]; then
             SIZE=$(ls -lh map.mbtiles | awk '{print $5}')
             echo "✅ Generated map.mbtiles ($SIZE)"
             
-            # Проверяем содержимое с помощью sqlite3
             echo "Checking tile statistics..."
             sqlite3 map.mbtiles "SELECT zoom_level, COUNT(*) as tile_count FROM tiles GROUP BY zoom_level ORDER BY zoom_level;" || true
           else
-            echo "::error::Failed to generate map.mbtiles"
+            echo "❌ Failed to generate map.mbtiles"
             exit 1
           fi
           
-          # Очищаем старую папку с тайлами (mb-util требует, чтобы папка не существовала)
+          # --- ЭТАП 6: Извлечение в папку tiles ---
           rm -rf tiles/
-
-          # Используем mb-util для извлечения тайлов из MBTiles
+          echo "📂 Extracting tiles with mb-util..."
           mb-util --image_format=pbf map.mbtiles tiles/
           
-          echo "Tiles generated successfully"
+          echo "✅ Tiles generated successfully"
           ls -lh tiles/
 
       - name: Upload Tiles Artifact
