@@ -1,4 +1,4 @@
-     name: Generate Offline Map Tiles
+   name: Generate Offline Map Tiles
 
 on:
   workflow_dispatch:
@@ -52,4 +52,288 @@ jobs:
           [out:xml][timeout:300];
           (
             way["highway"](56.24,39.32,56.34,39.43);
-            node["place"](56.24,39.32,56.34
+            node["place"](56.24,39.32,56.34,39.43);
+            way["building"](56.24,39.32,56.34,39.43);
+            relation["boundary"="administrative"]["admin_level"~"4|5|6|7"]["name"~"Владимир|Кольчугин"];
+          );
+          out body;
+          >;
+          out skel qt;
+          QUERYEOF
+          
+          MAX_RETRIES=3
+          RETRY_COUNT=0
+          SUCCESS=false
+          
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$SUCCESS" = "false" ]; do
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            echo "Attempt $RETRY_COUNT of $MAX_RETRIES..."
+            
+            curl -s -X POST \
+              -H "Content-Type: application/x-www-form-urlencoded" \
+              --data-urlencode "data@overpass-query.ql" \
+              -o region.osm \
+              "https://overpass-api.de/api/interpreter"
+            
+            if [ -f region.osm ] && [ -s region.osm ]; then
+              if ! head -c 200 region.osm | grep -qi "<html"; then
+                SUCCESS=true
+                echo "Download successful!"
+              else
+                echo "Attempt $RETRY_COUNT failed: Server returned HTML error"
+                if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                  echo "Waiting 30 seconds before retry..."
+                  sleep 30
+                fi
+              fi
+            else
+              echo "Attempt $RETRY_COUNT failed: Empty response"
+              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                echo "Waiting 30 seconds before retry..."
+                sleep 30
+              fi
+            fi
+          done
+          
+          if [ "$SUCCESS" = "false" ]; then
+            echo "::error::Overpass API failed after $MAX_RETRIES attempts"
+            if [ -f region.osm ]; then
+              echo "Last response:"
+              cat region.osm
+            fi
+            exit 1
+          fi
+          
+          echo "Response size: $(du -h region.osm | cut -f1)"
+          
+          WAY_COUNT=$(grep -c '<way' region.osm || echo "0")
+          NODE_COUNT=$(grep -c '<node' region.osm || echo "0")
+          echo "OSM XML contains: $WAY_COUNT ways, $NODE_COUNT nodes"
+          
+          if [ "$NODE_COUNT" -eq 0 ] || [ "$WAY_COUNT" -eq 0 ]; then
+            echo "::error::Downloaded OSM data seems incomplete (no ways or nodes)"
+            exit 1
+          fi
+          
+          osmium cat region.osm -o region.osm.pbf --overwrite
+          echo "PBF size: $(du -h region.osm.pbf | cut -f1)"
+
+      - name: Extract District Boundary
+        id: extract_boundary
+        run: |
+          DISTRICT_NAME="${{ github.event.inputs.district_name || 'Кольчугинский район' }}"
+          echo "Searching for boundary: $DISTRICT_NAME"
+          
+          osmium tags-filter -o boundary.osm.pbf region.osm.pbf \
+            r/boundary=administrative \
+            --overwrite
+          
+          if [ ! -f boundary.osm.pbf ] || [ ! -s boundary.osm.pbf ]; then
+            echo "::error::Boundary extraction failed"
+            exit 1
+          fi
+          
+          osmium cat boundary.osm.pbf -o boundary.osm
+
+          mkdir -p osm_layers
+
+          for layer in points lines multilinestrings multipolygons other_relations; do
+            if ogr2ogr -f GeoJSON "osm_layers/${layer}.geojson" boundary.osm "$layer" 2>/dev/null; then
+              echo "Converted layer: $layer"
+            fi
+          done
+
+          python3 scripts/merge_layers.py
+
+          export DISTRICT_NAME="$DISTRICT_NAME" && python3 scripts/find_district_boundary.py
+
+          if [ ! -f district.geojson ] || [ ! -s district.geojson ]; then
+            echo "::warning::District boundary not found, using full region data"
+            if [ -f osm_layers/multipolygons.geojson ]; then
+              cp osm_layers/multipolygons.geojson district.geojson
+            elif [ -f region_combined.geojson ]; then
+              cp region_combined.geojson district.geojson
+            else
+              echo "::error::No fallback data available"
+              exit 1
+            fi
+          fi
+
+          echo "district_file=district.geojson" >> $GITHUB_OUTPUT
+
+      - name: Generate Map Tiles
+        id: generate_tiles
+        run: |
+          MIN_ZOOM="${{ github.event.inputs.min_zoom || 12 }}"
+          MAX_ZOOM="${{ github.event.inputs.max_zoom || 18 }}"
+          
+          echo "Generating tiles from zoom $MIN_ZOOM to $MAX_ZOOM..."
+          mkdir -p region_layers
+          
+          OSM_FILE="region.osm.pbf"
+          if [ ! -f "$OSM_FILE" ] || [ ! -s "$OSM_FILE" ]; then
+            echo "::error::OSM PBF file not found or empty"
+            exit 1
+          fi
+          
+          echo "📥 Exporting all OSM features to GeoJSON..."
+          osmium export "$OSM_FILE" -o all_features.geojson --progress 2>&1 || {
+            echo "::error::osmium export failed"
+            exit 1
+          }
+          
+          FEATURE_COUNT=$(python3 -c "import json; print(len(json.load(open('all_features.geojson')).get('features',[])))")
+          echo "Total features exported: $FEATURE_COUNT"
+          
+          if [ "$FEATURE_COUNT" -eq 0 ]; then
+            echo "::error::No features exported from PBF"
+            exit 1
+          fi
+          
+          echo "✂️ Splitting into layers by tags and geometry..."
+          
+          cat > split_layers.py << 'PYEOF'
+          import json
+          
+          with open('all_features.geojson', 'r', encoding='utf-8') as f:
+              data = json.load(f)
+          
+          features = data.get('features', [])
+          print(f"Processing {len(features)} features...")
+          
+          layers = {
+              'roads': [],
+              'buildings': [],
+              'places': [],
+              'water': [],
+              'landuse': [],
+              'boundaries': []
+          }
+          
+          for feat in features:
+              props = feat.get('properties', {}) or {}
+              geom_type = feat.get('geometry', {}).get('type', '')
+              tags = {k: v for k, v in props.items() if v is not None}
+              
+              if 'highway' in tags and geom_type in ('LineString', 'MultiLineString'):
+                  layers['roads'].append(feat)
+              
+              if 'building' in tags and geom_type in ('Polygon', 'MultiPolygon'):
+                  layers['buildings'].append(feat)
+              
+              if 'place' in tags and geom_type == 'Point':
+                  layers['places'].append(feat)
+              
+              if ('water' in tags or 'waterway' in tags or tags.get('natural') == 'water'):
+                  layers['water'].append(feat)
+              
+              if ('landuse' in tags or 'leisure' in tags or 
+                  tags.get('natural') in ('wood', 'forest', 'grassland', 'scrub', 'wetland')):
+                  layers['landuse'].append(feat)
+              
+              if tags.get('boundary') == 'administrative' and geom_type in ('Polygon', 'MultiPolygon'):
+                  layers['boundaries'].append(feat)
+          
+          for name, feats in layers.items():
+              fname = f'region_layers/{name}.geojson'
+              with open(fname, 'w', encoding='utf-8') as f:
+                  json.dump({'type': 'FeatureCollection', 'features': feats}, f)
+              print(f"  {name}: {len(feats)} features")
+          
+          if layers['boundaries']:
+              with open('district.geojson', 'w', encoding='utf-8') as f:
+                  json.dump({'type': 'FeatureCollection', 'features': layers['boundaries']}, f)
+              print("  district.geojson created from boundaries")
+          PYEOF
+          
+          python3 split_layers.py
+          
+          echo "=== Layer statistics ==="
+          total=0
+          for f in region_layers/*.geojson; do
+            if [ -f "$f" ]; then
+              count=$(python3 -c "import json; print(len(json.load(open('$f')).get('features', [])))")
+              echo "  $(basename $f): $count features"
+              total=$((total + count))
+            fi
+          done
+          echo "  TOTAL: $total features"
+          echo "========================"
+          
+          if [ "$total" -eq 0 ]; then
+            echo "❌ CRITICAL ERROR: No features in any layer!"
+            exit 1
+          fi
+          
+          echo "🗺 Generating MBTiles with tippecanoe..."
+          rm -f map.mbtiles
+          
+          TIPPECANOE_ARGS="--projection=EPSG:3857 -o map.mbtiles --force -Z$MIN_ZOOM -z$MAX_ZOOM --no-tile-size-limit --detect-longitude-wraparound --reorder --read-parallel -v"
+          
+          add_layer() {
+            local name="$1"
+            local file="$2"
+            if [ -f "$file" ]; then
+              local count=$(python3 -c "import json; print(len(json.load(open('$file')).get('features', [])))")
+              if [ "$count" -gt 0 ]; then
+                TIPPECANOE_ARGS="$TIPPECANOE_ARGS -l $name $file"
+                echo "  ✓ Adding layer '$name' ($count features)"
+              else
+                echo "  ⚠ Skipping empty layer '$name'"
+              fi
+            else
+              echo "  ⚠ Skipping missing layer '$name'"
+            fi
+          }
+          
+          if [ -f "district.geojson" ] && [ -s "district.geojson" ]; then
+            add_layer "boundaries" "district.geojson"
+          else
+            add_layer "boundaries" "region_layers/boundaries.geojson"
+          fi
+          
+          add_layer "transportation" "region_layers/roads.geojson"
+          add_layer "building" "region_layers/buildings.geojson"
+          add_layer "places" "region_layers/places.geojson"
+          add_layer "water" "region_layers/water.geojson"
+          add_layer "landuse" "region_layers/landuse.geojson"
+          
+          echo "Running: tippecanoe $TIPPECANOE_ARGS"
+          tippecanoe $TIPPECANOE_ARGS 2>&1 | tee tippecanoe.log
+          
+          if [ -f map.mbtiles ]; then
+            SIZE=$(ls -lh map.mbtiles | awk '{print $5}')
+            echo "✅ Generated map.mbtiles ($SIZE)"
+            sqlite3 map.mbtiles "SELECT zoom_level, COUNT(*) as tile_count FROM tiles GROUP BY zoom_level ORDER BY zoom_level;" || true
+          else
+            echo "❌ Failed to generate map.mbtiles"
+            exit 1
+          fi
+          
+          rm -rf tiles/
+          mkdir -p tiles
+          echo "📂 Extracting tiles with mb-util..."
+          mb-util --image_format=pbf map.mbtiles tiles/
+          
+          if [ ! -f tiles/metadata.json ]; then
+            echo '{}' > tiles/metadata.json
+          fi
+          
+          echo "✅ Done"
+          ls -lh tiles/
+          ls tiles/ | grep -E '^[0-9]+$' || echo "No zoom level directories found!"
+
+      - name: Upload Tiles Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: map-tiles
+          path: tiles/
+          retention-days: 7
+
+      - name: Commit and Push Tiles
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add tiles/ || true
+          git commit -m "Update map tiles [skip ci]" || true
+          git push || true
