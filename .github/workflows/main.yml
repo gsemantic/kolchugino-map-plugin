@@ -171,25 +171,38 @@ jobs:
           
           mkdir -p region_layers
           
-          # Переменная для PBF файла (используем region.osm.pbf из шага загрузки)
+          # Используем файл, скачанный через Overpass API
           OSM_FILE="region.osm.pbf"
           
-          # --- ЭТАП 1: Прямая выгрузка всех слоев из PBF через ogr2ogr ---
-          echo "📥 Extracting OSM layers directly from PBF..."
+          if [ ! -f "$OSM_FILE" ] || [ ! -s "$OSM_FILE" ]; then
+            echo "::error::OSM PBF file not found or empty. Did Overpass download fail?"
+            exit 1
+          fi
+          
+          echo "📥 Extracting OSM layers using osmium and ogr2ogr..."
+          
+          # --- ЭТАП 1: Конвертация PBF в OSM XML для надежной обработки ogr2ogr ---
+          # ogr2ogr часто плохо читает PBF напрямую, особенно способы (ways)
+          echo "Converting PBF to OSM XML for stable processing..."
+          osmium cat "$OSM_FILE" -o region_full.osm
+          
+          # --- ЭТАП 2: Выгрузка слоев из OSM XML через ogr2ogr ---
+          OSM_XML="region_full.osm"
           
           for layer in points lines multilinestrings multipolygons other_relations; do
             echo "Extracting layer: $layer"
-            if ogr2ogr -f GeoJSON -t_srs EPSG:4326 "region_layers/${layer}.geojson" "$OSM_FILE" "$layer" -skipfailures 2>&1; then
+            # Создаем пустой файл заранее, чтобы скрипты ниже не падали
+            echo '{"type":"FeatureCollection","features":[]}' > "region_layers/${layer}.geojson"
+            
+            if ogr2ogr -f GeoJSON -t_srs EPSG:4326 "region_layers/${layer}.geojson" "$OSM_XML" "$layer" -skipfailures 2>&1; then
               if [ -f "region_layers/${layer}.geojson" ]; then
                 count=$(python3 -c "import json; print(len(json.load(open('region_layers/${layer}.geojson')).get('features', [])))")
                 echo "  ✓ $layer: $count features"
               else
                 echo "  ⚠ $layer: file not created"
-                echo '{"type":"FeatureCollection","features":[]}' > "region_layers/${layer}.geojson"
               fi
             else
-              echo "  ⚠ $layer: ogr2ogr failed, creating empty file"
-              echo '{"type":"FeatureCollection","features":[]}' > "region_layers/${layer}.geojson"
+              echo "  ⚠ $layer: ogr2ogr failed, keeping empty file"
             fi
           done
 
