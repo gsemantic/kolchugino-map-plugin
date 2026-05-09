@@ -169,7 +169,7 @@ jobs:
           
           echo "Generating tiles from zoom $MIN_ZOOM to $MAX_ZOOM..."
           
-          # Конвертируем region.osm.pbf в OSM XML, затем в GeoJSON (аналогично предыдущему шагу)
+          # Конвертируем region.osm.pbf в OSM XML для ogr2ogr
           osmium cat region.osm.pbf -o region.osm --overwrite
           
           mkdir -p region_layers
@@ -228,7 +228,25 @@ jobs:
             -l places region_layers/places.geojson \
             --force \
             -Z$MIN_ZOOM -z$MAX_ZOOM \
-            -v
+            --drop-densest-as-needed \
+            --coalesce-densest \
+            --detect-longitude-wraparound \
+            --reorder \
+            --read-parallel \
+            2>&1 | tee tippecanoe.log
+          
+          # Показываем статистику MBTiles
+          if [ -f map.mbtiles ]; then
+            SIZE=$(ls -lh map.mbtiles | awk '{print $5}')
+            echo "✅ Generated map.mbtiles ($SIZE)"
+            
+            # Проверяем содержимое с помощью sqlite3
+            echo "Checking tile statistics..."
+            sqlite3 map.mbtiles "SELECT zoom_level, COUNT(*) as tile_count FROM tiles GROUP BY zoom_level ORDER BY zoom_level;" || true
+          else
+            echo "::error::Failed to generate map.mbtiles"
+            exit 1
+          fi
           
           # Очищаем старую папку с тайлами (mb-util требует, чтобы папка не существовала)
           rm -rf tiles/
