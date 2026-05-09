@@ -200,10 +200,12 @@ jobs:
           cat > filter_roads.py << 'SCRIPTEOF'
           import json, os
           roads = []
-          if os.path.exists('region_layers/lines.geojson'):
-              with open('region_layers/lines.geojson') as f:
-                  data = json.load(f)
-                  roads = [feat for feat in data.get('features', []) if 'highway' in feat.get('properties', {})]
+          for lname in ['lines', 'multilinestrings']:
+              fname = f'region_layers/{lname}.geojson'
+              if os.path.exists(fname):
+                  with open(fname) as f:
+                      data = json.load(f)
+                      roads.extend([feat for feat in data.get('features', []) if 'highway' in feat.get('properties', {})])
           with open('region_layers/roads.geojson', 'w') as f:
               json.dump({'type': 'FeatureCollection', 'features': roads}, f)
           print(f'  Roads extracted: {len(roads)}')
@@ -216,11 +218,11 @@ jobs:
               fname = f'region_layers/{lname}.geojson'
               if os.path.exists(fname):
                   with open(fname) as f:
-            data = json.load(f)
-            for feat in data.get('features', []):
-                if 'building' in feat.get('properties', {}):
-                    buildings.append(feat)
-          with open('region_layers/buildings.geojson', 'w') as f:
+                      data = json.load(f)
+                      for feat in data.get('features', []):
+                          if 'building' in feat.get('properties', {}):
+                              buildings.append(feat)
+          with open('region_layers/building.geojson', 'w') as f:
               json.dump({'type': 'FeatureCollection', 'features': buildings}, f)
           print(f'  Buildings extracted: {len(buildings)}')
           SCRIPTEOF
@@ -237,15 +239,51 @@ jobs:
           print(f'  Places extracted: {len(places)}')
           SCRIPTEOF
 
+          cat > filter_water.py << 'SCRIPTEOF'
+          import json, os
+          water = []
+          for lname in ['lines', 'multilinestrings', 'multipolygons', 'other_relations']:
+              fname = f'region_layers/{lname}.geojson'
+              if os.path.exists(fname):
+                  with open(fname) as f:
+                      data = json.load(f)
+                      for feat in data.get('features', []):
+                          props = feat.get('properties', {})
+                          if 'water' in props or 'waterway' in props or (props.get('natural') == 'water'):
+                              water.append(feat)
+          with open('region_layers/water.geojson', 'w') as f:
+              json.dump({'type': 'FeatureCollection', 'features': water}, f)
+          print(f'  Water features extracted: {len(water)}')
+          SCRIPTEOF
+
+          cat > filter_landuse.py << 'SCRIPTEOF'
+          import json, os
+          landuse = []
+          for lname in ['multipolygons', 'other_relations']:
+              fname = f'region_layers/{lname}.geojson'
+              if os.path.exists(fname):
+                  with open(fname) as f:
+                      data = json.load(f)
+                      for feat in data.get('features', []):
+                          props = feat.get('properties', {})
+                          if 'landuse' in props or 'leisure' in props or 'natural' in props:
+                              landuse.append(feat)
+          with open('region_layers/landuse.geojson', 'w') as f:
+              json.dump({'type': 'FeatureCollection', 'features': landuse}, f)
+          print(f'  Landuse features extracted: {len(landuse)}')
+          SCRIPTEOF
+
           # Запускаем скрипты фильтрации
           python3 filter_roads.py
           python3 filter_buildings.py
           python3 filter_places.py
+          python3 filter_water.py
+          python3 filter_landuse.py
 
           # --- ЭТАП 3: Диагностика ---
           echo "=== Diagnostic: Final feature counts ==="
           total=0
-          for f in region_layers/roads.geojson region_layers/buildings.geojson region_layers/places.geojson; do
+          for f in region_layers/roads.geojson region_layers/building.geojson region_layers/places.geojson region_layers/water.geojson region_layers/landuse.geojson; do
             if [ -f "$f" ]; then
               count=$(python3 -c "import json; print(len(json.load(open('$f')).get('features', [])))")
               echo "  $f: $count features"
@@ -269,9 +307,11 @@ jobs:
           tippecanoe --projection=EPSG:3857 \
             -o map.mbtiles \
             -l boundaries district.geojson \
-            -l roads region_layers/roads.geojson \
-            -l buildings region_layers/buildings.geojson \
+            -l transportation region_layers/roads.geojson \
+            -l building region_layers/building.geojson \
             -l places region_layers/places.geojson \
+            -l water region_layers/water.geojson \
+            -l landuse region_layers/landuse.geojson \
             --force \
             -Z$MIN_ZOOM -z$MAX_ZOOM \
             --no-tile-size-limit \
