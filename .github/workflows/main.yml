@@ -391,16 +391,21 @@ jobs:
           # Запускаем tippecanoe с динамическим списком слоев
           # -f: перезаписать выходной файл
           # -r0: не отбрасывать точки на низких зумах (важно для малого количества данных)
+          # --no-feature-limit: не ограничивать количество фич в тайле
+          # --no-tile-size-limit: не ограничивать размер тайла
+          # -pg: принудительно генерировать тайлы на всех зумах для точек
           eval tippecanoe --projection=EPSG:3857 \
             -o map.mbtiles \
             $TIPPECANOE_INPUTS \
             --force \
             -Z$MIN_ZOOM -z$MAX_ZOOM \
             --no-tile-size-limit \
+            --no-feature-limit \
             --detect-longitude-wraparound \
             --reorder \
             --read-parallel \
             -r0 \
+            -pg \
             -v \
             2>&1 | tee tippecanoe.log
           
