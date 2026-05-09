@@ -1,16 +1,1 @@
-{
-    "name": "map.mbtiles",
-    "description": "map.mbtiles",
-    "version": "2",
-    "minzoom": "10",
-    "maxzoom": "17",
-    "center": "0.000373,0.000508,17",
-    "bounds": "0.000368,0.000505,0.000373,0.000508",
-    "antimeridian_adjusted_bounds": "0.000368,0.000505,0.000373,0.000508",
-    "type": "overlay",
-    "format": "pbf",
-    "generator": "tippecanoe v2.49.0",
-    "generator_options": "tippecanoe -zg '--projection=EPSG:3857' -o map.mbtiles -l boundaries district.geojson -l roads region_layers/roads.geojson -l buildings region_layers/buildings.geojson -l places region_layers/places.geojson --force -Z10 -z14",
-    "strategies": "[{},{},{},{},{},{},{},{},{},{},{\"tiny_polygons\":4},{\"tiny_polygons\":4},{\"tiny_polygons\":4},{\"tiny_polygons\":4},{\"tiny_polygons\":2},{\"tiny_polygons\":1},{},{}]",
-    "json": "{\"vector_layers\":[{\"id\":\"places\",\"description\":\"\",\"minzoom\":10,\"maxzoom\":17,\"fields\":{\"admin_level\":\"String\",\"boundary\":\"String\",\"name\":\"String\",\"name_en\":\"String\"}}],\"tilestats\":{\"layerCount\":1,\"layers\":[{\"layer\":\"places\",\"count\":1,\"geometry\":\"Polygon\",\"attributeCount\":4,\"attributes\":[{\"attribute\":\"admin_level\",\"count\":1,\"type\":\"string\",\"values\":[\"6\"]},{\"attribute\":\"boundary\",\"count\":1,\"type\":\"string\",\"values\":[\"administrative\"]},{\"attribute\":\"name\",\"count\":1,\"type\":\"string\",\"values\":[\"\u041a\u043e\u043b\u044c\u0447\u0443\u0433\u0438\u043d\u0441\u043a\u0438\u0439 \u0440\u0430\u0439\u043e\u043d\"]},{\"attribute\":\"name_en\",\"count\":1,\"type\":\"string\",\"values\":[\"Kolchugino District\"]}]}]}}"
-}
+{}
