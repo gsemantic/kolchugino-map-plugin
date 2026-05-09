@@ -1,4 +1,4 @@
-   name: Generate Offline Map Tiles
+name: Generate Offline Map Tiles
 
 on:
   workflow_dispatch:
@@ -323,17 +323,4 @@ jobs:
           ls -lh tiles/
           ls tiles/ | grep -E '^[0-9]+$' || echo "No zoom level directories found!"
 
-      - name: Upload Tiles Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: map-tiles
-          path: tiles/
-          retention-days: 7
-
-      - name: Commit and Push Tiles
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add tiles/ || true
-          git commit -m "Update map tiles [skip ci]" || true
-          git push || true
+      - name
