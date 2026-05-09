@@ -48,9 +48,8 @@ jobs:
         run: |
           echo "Downloading OSM data for Vladimir Region via Overpass API..."
           
-          # Оптимизированный запрос с меньшим таймаутом и retry logic
           cat > overpass-query.ql << 'QUERYEOF'
-          [out:xml][timeout:600];
+          [out:xml][timeout:300];
           (
             // Загружаем все дороги, здания и места в области вокруг Кольчугино (центр: 56.294425, 39.375751)
             way["highway"](56.24,39.32,56.34,39.43);
@@ -63,8 +62,8 @@ jobs:
           out body;
           QUERYEOF
           
-          # Retry logic for Overpass API (up to 5 attempts with exponential backoff)
-          MAX_RETRIES=5
+          # Retry logic for Overpass API (up to 3 attempts with delays)
+          MAX_RETRIES=3
           RETRY_COUNT=0
           SUCCESS=false
           
@@ -72,48 +71,29 @@ jobs:
             RETRY_COUNT=$((RETRY_COUNT + 1))
             echo "Attempt $RETRY_COUNT of $MAX_RETRIES..."
             
-            # Используем альтернативный сервер Overpass если основной не работает
-            OVERPASS_SERVERS=("https://overpass-api.de/api/interpreter" "https://overpass.kumi.systems/api/interpreter" "https://overpass.osm.ch/api/interpreter")
-            SERVER_INDEX=$((RETRY_COUNT % 3))
-            OVERPASS_URL="${OVERPASS_SERVERS[$SERVER_INDEX]}"
-            
-            echo "Using server: $OVERPASS_URL"
-            
-            curl -s --max-time 600 -X POST \
+            curl -s -X POST \
               -H "Content-Type: application/x-www-form-urlencoded" \
               --data-urlencode "data@overpass-query.ql" \
               -o region.osm \
-              "$OVERPASS_URL"
+              "https://overpass-api.de/api/interpreter"
             
             if [ -f region.osm ] && [ -s region.osm ]; then
               # Check if response contains HTML error page
               if ! head -c 200 region.osm | grep -qi "<html"; then
-                # Проверка что это valid OSM XML
-                if head -c 200 region.osm | grep -qi "<?xml\|<osm"; then
-                  SUCCESS=true
-                  echo "Download successful!"
-                else
-                  echo "Attempt $RETRY_COUNT failed: Invalid OSM format"
-                  if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-                    WAIT_TIME=$((30 * RETRY_COUNT))
-                    echo "Waiting $WAIT_TIME seconds before retry..."
-                    sleep $WAIT_TIME
-                  fi
-                fi
+                SUCCESS=true
+                echo "Download successful!"
               else
                 echo "Attempt $RETRY_COUNT failed: Server returned HTML error"
                 if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-                  WAIT_TIME=$((30 * RETRY_COUNT))
-                  echo "Waiting $WAIT_TIME seconds before retry..."
-                  sleep $WAIT_TIME
+                  echo "Waiting 30 seconds before retry..."
+                  sleep 30
                 fi
               fi
             else
               echo "Attempt $RETRY_COUNT failed: Empty response"
               if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-                WAIT_TIME=$((30 * RETRY_COUNT))
-                echo "Waiting $WAIT_TIME seconds before retry..."
-                sleep $WAIT_TIME
+                echo "Waiting 30 seconds before retry..."
+                sleep 30
               fi
             fi
           done
@@ -122,7 +102,7 @@ jobs:
             echo "::error::Overpass API failed after $MAX_RETRIES attempts"
             if [ -f region.osm ]; then
               echo "Last response:"
-              head -c 1000 region.osm
+              cat region.osm
             fi
             exit 1
           fi
@@ -324,88 +304,20 @@ jobs:
           echo "🗺 Generating MBTiles with tippecanoe..."
           rm -f map.mbtiles
           
-          # Собираем список непустых слоев для tippecanoe
-          TIPPECANOE_INPUTS=""
-          
-          # Проверяем district.geojson
-          if [ -f district.geojson ] && [ -s district.geojson ]; then
-            count=$(python3 -c "import json; print(len(json.load(open('district.geojson')).get('features', [])))" 2>/dev/null || echo "0")
-            if [ "$count" -gt 0 ]; then
-              TIPPECANOE_INPUTS="$TIPPECANOE_INPUTS -l boundaries district.geojson"
-              echo "  ✓ Adding boundaries layer ($count features)"
-            fi
-          fi
-          
-          # Проверяем roads
-          if [ -f region_layers/roads.geojson ] && [ -s region_layers/roads.geojson ]; then
-            count=$(python3 -c "import json; print(len(json.load(open('region_layers/roads.geojson')).get('features', [])))" 2>/dev/null || echo "0")
-            if [ "$count" -gt 0 ]; then
-              TIPPECANOE_INPUTS="$TIPPECANOE_INPUTS -l transportation region_layers/roads.geojson"
-              echo "  ✓ Adding transportation layer ($count features)"
-            fi
-          fi
-          
-          # Проверяем buildings
-          if [ -f region_layers/building.geojson ] && [ -s region_layers/building.geojson ]; then
-            count=$(python3 -c "import json; print(len(json.load(open('region_layers/building.geojson')).get('features', [])))" 2>/dev/null || echo "0")
-            if [ "$count" -gt 0 ]; then
-              TIPPECANOE_INPUTS="$TIPPECANOE_INPUTS -l building region_layers/building.geojson"
-              echo "  ✓ Adding building layer ($count features)"
-            fi
-          fi
-          
-          # Проверяем places
-          if [ -f region_layers/places.geojson ] && [ -s region_layers/places.geojson ]; then
-            count=$(python3 -c "import json; print(len(json.load(open('region_layers/places.geojson')).get('features', [])))" 2>/dev/null || echo "0")
-            if [ "$count" -gt 0 ]; then
-              TIPPECANOE_INPUTS="$TIPPECANOE_INPUTS -l places region_layers/places.geojson"
-              echo "  ✓ Adding places layer ($count features)"
-            fi
-          fi
-          
-          # Проверяем water
-          if [ -f region_layers/water.geojson ] && [ -s region_layers/water.geojson ]; then
-            count=$(python3 -c "import json; print(len(json.load(open('region_layers/water.geojson')).get('features', [])))" 2>/dev/null || echo "0")
-            if [ "$count" -gt 0 ]; then
-              TIPPECANOE_INPUTS="$TIPPECANOE_INPUTS -l water region_layers/water.geojson"
-              echo "  ✓ Adding water layer ($count features)"
-            fi
-          fi
-          
-          # Проверяем landuse
-          if [ -f region_layers/landuse.geojson ] && [ -s region_layers/landuse.geojson ]; then
-            count=$(python3 -c "import json; print(len(json.load(open('region_layers/landuse.geojson')).get('features', [])))" 2>/dev/null || echo "0")
-            if [ "$count" -gt 0 ]; then
-              TIPPECANOE_INPUTS="$TIPPECANOE_INPUTS -l landuse region_layers/landuse.geojson"
-              echo "  ✓ Adding landuse layer ($count features)"
-            fi
-          fi
-          
-          if [ -z "$TIPPECANOE_INPUTS" ]; then
-            echo "❌ CRITICAL ERROR: No valid layers to process!"
-            exit 1
-          fi
-          
-          echo "Running tippecanoe with layers:$TIPPECANOE_INPUTS"
-          
-          # Запускаем tippecanoe с динамическим списком слоев
-          # -f: перезаписать выходной файл
-          # -r0: не отбрасывать точки на низких зумах (важно для малого количества данных)
-          # --no-feature-limit: не ограничивать количество фич в тайле
-          # --no-tile-size-limit: не ограничивать размер тайла
-          # -pg: принудительно генерировать тайлы на всех зумах для точек
-          eval tippecanoe --projection=EPSG:3857 \
+          tippecanoe --projection=EPSG:3857 \
             -o map.mbtiles \
-            $TIPPECANOE_INPUTS \
+            -l boundaries district.geojson \
+            -l transportation region_layers/roads.geojson \
+            -l building region_layers/building.geojson \
+            -l places region_layers/places.geojson \
+            -l water region_layers/water.geojson \
+            -l landuse region_layers/landuse.geojson \
             --force \
             -Z$MIN_ZOOM -z$MAX_ZOOM \
             --no-tile-size-limit \
-            --no-feature-limit \
             --detect-longitude-wraparound \
             --reorder \
             --read-parallel \
-            -r0 \
-            -pg \
             -v \
             2>&1 | tee tippecanoe.log
           
