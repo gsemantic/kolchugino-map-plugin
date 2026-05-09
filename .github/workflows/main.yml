@@ -6,11 +6,11 @@ on:
       min_zoom:
         description: 'Min zoom level'
         required: true
-        default: '10'
+        default: '12'
       max_zoom:
         description: 'Max zoom level'
         required: true
-        default: '14'
+        default: '18'
       district_name:
         description: 'District name for boundary search'
         required: true
@@ -164,12 +164,15 @@ jobs:
       - name: Generate Map Tiles
         id: generate_tiles
         run: |
-          MIN_ZOOM="${{ github.event.inputs.min_zoom || 10 }}"
-          MAX_ZOOM="${{ github.event.inputs.max_zoom || 14 }}"
+          MIN_ZOOM="${{ github.event.inputs.min_zoom || 12 }}"
+          MAX_ZOOM="${{ github.event.inputs.max_zoom || 18 }}"
           
           echo "Generating tiles from zoom $MIN_ZOOM to $MAX_ZOOM..."
           
           mkdir -p region_layers
+          
+          # Переменная для PBF файла (используем region.osm.pbf из шага загрузки)
+          OSM_FILE="region.osm.pbf"
           
           # --- ЭТАП 1: Прямая выгрузка всех слоев из PBF через ogr2ogr ---
           echo "📥 Extracting OSM layers directly from PBF..."
@@ -268,8 +271,7 @@ PYEOF
             -l places region_layers/places.geojson \
             --force \
             -Z$MIN_ZOOM -z$MAX_ZOOM \
-            --drop-densest-as-needed \
-            --coalesce-densest \
+            --no-tile-size-limit \
             --detect-longitude-wraparound \
             --reorder \
             --read-parallel \
@@ -290,11 +292,21 @@ PYEOF
           
           # --- ЭТАП 6: Извлечение в папку tiles ---
           rm -rf tiles/
+          mkdir -p tiles
           echo "📂 Extracting tiles with mb-util..."
           mb-util --image_format=pbf map.mbtiles tiles/
           
+          # Добавляем metadata.json для совместимости
+          if [ -f tiles/metadata.json ]; then
+            echo "metadata.json exists"
+          else
+            echo '{}' > tiles/metadata.json
+          fi
+          
           echo "✅ Tiles generated successfully"
           ls -lh tiles/
+          echo "Tile directories:"
+          ls tiles/ | grep -E '^[0-9]+$' || echo "No zoom level directories found!"
 
       - name: Upload Tiles Artifact
         uses: actions/upload-artifact@v4
