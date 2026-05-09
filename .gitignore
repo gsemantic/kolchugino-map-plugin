@@ -1,7 +1,4 @@
-```gitignore
-# Environment
-.env.local
-
-# Editors
-.vscode/
+```
+# CI/CD
+.github/
 ```

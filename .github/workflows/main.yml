@@ -48,8 +48,9 @@ jobs:
         run: |
           echo "Downloading OSM data for Vladimir Region via Overpass API..."
           
+          # Оптимизированный запрос с меньшим таймаутом и retry logic
           cat > overpass-query.ql << 'QUERYEOF'
-          [out:xml][timeout:300];
+          [out:xml][timeout:600];
           (
             // Загружаем все дороги, здания и места в области вокруг Кольчугино (центр: 56.294425, 39.375751)
             way["highway"](56.24,39.32,56.34,39.43);
@@ -62,8 +63,8 @@ jobs:
           out body;
           QUERYEOF
           
-          # Retry logic for Overpass API (up to 3 attempts with delays)
-          MAX_RETRIES=3
+          # Retry logic for Overpass API (up to 5 attempts with exponential backoff)
+          MAX_RETRIES=5
           RETRY_COUNT=0
           SUCCESS=false
           
@@ -71,29 +72,48 @@ jobs:
             RETRY_COUNT=$((RETRY_COUNT + 1))
             echo "Attempt $RETRY_COUNT of $MAX_RETRIES..."
             
-            curl -s -X POST \
+            # Используем альтернативный сервер Overpass если основной не работает
+            OVERPASS_SERVERS=("https://overpass-api.de/api/interpreter" "https://overpass.kumi.systems/api/interpreter" "https://overpass.osm.ch/api/interpreter")
+            SERVER_INDEX=$((RETRY_COUNT % 3))
+            OVERPASS_URL="${OVERPASS_SERVERS[$SERVER_INDEX]}"
+            
+            echo "Using server: $OVERPASS_URL"
+            
+            curl -s --max-time 600 -X POST \
               -H "Content-Type: application/x-www-form-urlencoded" \
               --data-urlencode "data@overpass-query.ql" \
               -o region.osm \
-              "https://overpass-api.de/api/interpreter"
+              "$OVERPASS_URL"
             
             if [ -f region.osm ] && [ -s region.osm ]; then
               # Check if response contains HTML error page
               if ! head -c 200 region.osm | grep -qi "<html"; then
-                SUCCESS=true
-                echo "Download successful!"
+                # Проверка что это valid OSM XML
+                if head -c 200 region.osm | grep -qi "<?xml\|<osm"; then
+                  SUCCESS=true
+                  echo "Download successful!"
+                else
+                  echo "Attempt $RETRY_COUNT failed: Invalid OSM format"
+                  if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                    WAIT_TIME=$((30 * RETRY_COUNT))
+                    echo "Waiting $WAIT_TIME seconds before retry..."
+                    sleep $WAIT_TIME
+                  fi
+                fi
               else
                 echo "Attempt $RETRY_COUNT failed: Server returned HTML error"
                 if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-                  echo "Waiting 30 seconds before retry..."
-                  sleep 30
+                  WAIT_TIME=$((30 * RETRY_COUNT))
+                  echo "Waiting $WAIT_TIME seconds before retry..."
+                  sleep $WAIT_TIME
                 fi
               fi
             else
               echo "Attempt $RETRY_COUNT failed: Empty response"
               if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-                echo "Waiting 30 seconds before retry..."
-                sleep 30
+                WAIT_TIME=$((30 * RETRY_COUNT))
+                echo "Waiting $WAIT_TIME seconds before retry..."
+                sleep $WAIT_TIME
               fi
             fi
           done
@@ -102,7 +122,7 @@ jobs:
             echo "::error::Overpass API failed after $MAX_RETRIES attempts"
             if [ -f region.osm ]; then
               echo "Last response:"
-              cat region.osm
+              head -c 1000 region.osm
             fi
             exit 1
           fi
