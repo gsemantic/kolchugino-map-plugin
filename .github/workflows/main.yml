@@ -174,10 +174,14 @@ jobs:
           
           mkdir -p region_layers
           
-          # Конвертируем каждый слой отдельно
+          # Конвертируем каждый слой отдельно с явным указанием формата OSM
           for layer in points lines multilinestrings multipolygons other_relations; do
-            if ogr2ogr -f GeoJSON "region_layers/${layer}.geojson" region.osm "$layer" 2>/dev/null; then
-              echo "Converted region layer: $layer"
+            if ogr2ogr -f GeoJSON -nlt GEOMETRY "region_layers/${layer}.geojson" OSM:"region.osm" "$layer" 2>/dev/null; then
+              count=$(python3 -c "import json; print(len(json.load(open('region_layers/${layer}.geojson'))['features']))")
+              echo "Converted region layer: $layer (features: $count)"
+            else
+              echo "Warning: Failed to convert layer $layer"
+              echo '{"type":"FeatureCollection","features":[]}' > "region_layers/${layer}.geojson"
             fi
           done
           
