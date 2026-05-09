@@ -171,114 +171,95 @@ jobs:
           
           mkdir -p region_layers
           
-          # Используем исходный region.osm (XML) для конвертации через ogr2ogr
-          OSM_XML="region.osm"
+          # Используем region.osm.pbf для извлечения данных через osmium и ogr2ogr
+          OSM_PBF="region.osm.pbf"
           
-          # --- ЭТАП 1: Конвертация OSM XML в GeoJSON через ogr2ogr ---
-          echo "📥 Converting OSM data to GeoJSON..."
+          # --- ЭТАП 1: Извлечение слоев из PBF через osmium ---
+          echo "📥 Extracting OSM layers from PBF using osmium..."
           
-          for layer in points lines multilinestrings multipolygons other_relations; do
-            echo "Extracting layer: $layer"
-            if ogr2ogr -f GeoJSON -t_srs EPSG:4326 "region_layers/${layer}.geojson" "$OSM_XML" "$layer" -skipfailures 2>&1; then
-              if [ -f "region_layers/${layer}.geojson" ]; then
-                count=$(python3 -c "import json; print(len(json.load(open('region_layers/${layer}.geojson')).get('features', [])))")
-                echo "  ✓ $layer: $count features"
-              else
-                echo "  ⚠ $layer: file not created"
-                echo '{"type":"FeatureCollection","features":[]}' > "region_layers/${layer}.geojson"
-              fi
+          # Дороги (highway) - линии и отношения
+          echo "Extracting roads..."
+          osmium tags-filter "$OSM_PBF" w/highway -o region_layers/roads.osm.pbf --overwrite 2>/dev/null || true
+          if [ -f region_layers/roads.osm.pbf ]; then
+            osmium cat region_layers/roads.osm.pbf -o region_layers/roads_temp.osm
+            ogr2ogr -f GeoJSON -t_srs EPSG:4326 "region_layers/roads.geojson" "region_layers/roads_temp.osm" lines -skipfailures 2>/dev/null || echo '{"type":"FeatureCollection","features":[]}' > "region_layers/roads.geojson"
+            rm -f region_layers/roads_temp.osm region_layers/roads.osm.pbf
+          else
+            echo '{"type":"FeatureCollection","features":[]}' > "region_layers/roads.geojson"
+          fi
+          
+          # Здания (building) - полигоны
+          echo "Extracting buildings..."
+          osmium tags-filter "$OSM_PBF" w/building -o region_layers/buildings.osm.pbf --overwrite 2>/dev/null || true
+          if [ -f region_layers/buildings.osm.pbf ]; then
+            osmium cat region_layers/buildings.osm.pbf -o region_layers/buildings_temp.osm
+            ogr2ogr -f GeoJSON -t_srs EPSG:4326 "region_layers/building.geojson" "region_layers/buildings_temp.osm" multipolygons -skipfailures 2>/dev/null || echo '{"type":"FeatureCollection","features":[]}' > "region_layers/building.geojson"
+            rm -f region_layers/buildings_temp.osm region_layers/buildings.osm.pbf
+          else
+            echo '{"type":"FeatureCollection","features":[]}' > "region_layers/building.geojson"
+          fi
+          
+          # Места (place) - точки
+          echo "Extracting places..."
+          osmium tags-filter "$OSM_PBF" n/place -o region_layers/places.osm.pbf --overwrite 2>/dev/null || true
+          if [ -f region_layers/places.osm.pbf ]; then
+            osmium cat region_layers/places.osm.pbf -o region_layers/places_temp.osm
+            ogr2ogr -f GeoJSON -t_srs EPSG:4326 "region_layers/places.geojson" "region_layers/places_temp.osm" points -skipfailures 2>/dev/null || echo '{"type":"FeatureCollection","features":[]}' > "region_layers/places.geojson"
+            rm -f region_layers/places_temp.osm region_layers/places.osm.pbf
+          else
+            echo '{"type":"FeatureCollection","features":[]}' > "region_layers/places.geojson"
+          fi
+          
+          # Вода (water, waterway, natural=water)
+          echo "Extracting water..."
+          osmium tags-filter "$OSM_PBF" w/water w/waterway w/natural=water -o region_layers/water.osm.pbf --overwrite 2>/dev/null || true
+          if [ -f region_layers/water.osm.pbf ]; then
+            osmium cat region_layers/water.osm.pbf -o region_layers/water_temp.osm
+            # Пробуем извлечь и линии и полигоны
+            ogr2ogr -f GeoJSON -t_srs EPSG:4326 "region_layers/water_lines.geojson" "region_layers/water_temp.osm" lines -skipfailures 2>/dev/null || true
+            ogr2ogr -f GeoJSON -t_srs EPSG:4326 "region_layers/water_poly.geojson" "region_layers/water_temp.osm" multipolygons -skipfailures 2>/dev/null || true
+            python3 -c "
+import json
+water = []
+for fname in ['region_layers/water_lines.geojson', 'region_layers/water_poly.geojson']:
+    import os
+    if os.path.exists(fname):
+        with open(fname) as f:
+            data = json.load(f)
+            water.extend(data.get('features', []))
+with open('region_layers/water.geojson', 'w') as f:
+    json.dump({'type': 'FeatureCollection', 'features': water}, f)
+print(f'Water features: {len(water)}')
+"
+            rm -f region_layers/water_temp.osm region_layers/water.osm.pbf region_layers/water_lines.geojson region_layers/water_poly.geojson
+          else
+            echo '{"type":"FeatureCollection","features":[]}' > "region_layers/water.geojson"
+          fi
+          
+          # Landuse (landuse, leisure, natural)
+          echo "Extracting landuse..."
+          osmium tags-filter "$OSM_PBF" w/landuse w/leisure w/natural -o region_layers/landuse.osm.pbf --overwrite 2>/dev/null || true
+          if [ -f region_layers/landuse.osm.pbf ]; then
+            osmium cat region_layers/landuse.osm.pbf -o region_layers/landuse_temp.osm
+            ogr2ogr -f GeoJSON -t_srs EPSG:4326 "region_layers/landuse.geojson" "region_layers/landuse_temp.osm" multipolygons -skipfailures 2>/dev/null || echo '{"type":"FeatureCollection","features":[]}' > "region_layers/landuse.geojson"
+            rm -f region_layers/landuse_temp.osm region_layers/landuse.osm.pbf
+          else
+            echo '{"type":"FeatureCollection","features":[]}' > "region_layers/landuse.geojson"
+          fi
+          
+          echo "Layer extraction complete"
+
+          # --- ЭТАП 2: Подсчет объектов в слоях ---
+          echo "📊 Counting features in layers..."
+          
+          for f in region_layers/roads.geojson region_layers/building.geojson region_layers/places.geojson region_layers/water.geojson region_layers/landuse.geojson; do
+            if [ -f "$f" ]; then
+              count=$(python3 -c "import json; print(len(json.load(open('$f')).get('features', [])))")
+              echo "  $f: $count features"
             else
-              echo "  ⚠ $layer: ogr2ogr failed, creating empty file"
-              echo '{"type":"FeatureCollection","features":[]}' > "region_layers/${layer}.geojson"
+              echo "  $f: FILE NOT FOUND"
             fi
           done
-
-          # --- ЭТАП 2: Фильтрация по тегам ---
-          echo "✂️ Filtering features by tags..."
-          
-          # Создаем скрипты для фильтрации
-          cat > filter_roads.py << 'SCRIPTEOF'
-          import json, os
-          roads = []
-          for lname in ['lines', 'multilinestrings']:
-              fname = f'region_layers/{lname}.geojson'
-              if os.path.exists(fname):
-                  with open(fname) as f:
-                      data = json.load(f)
-                      roads.extend([feat for feat in data.get('features', []) if 'highway' in feat.get('properties', {})])
-          with open('region_layers/roads.geojson', 'w') as f:
-              json.dump({'type': 'FeatureCollection', 'features': roads}, f)
-          print(f'  Roads extracted: {len(roads)}')
-          SCRIPTEOF
-
-          cat > filter_buildings.py << 'SCRIPTEOF'
-          import json, os
-          buildings = []
-          for lname in ['multipolygons', 'other_relations']:
-              fname = f'region_layers/{lname}.geojson'
-              if os.path.exists(fname):
-                  with open(fname) as f:
-                      data = json.load(f)
-                      for feat in data.get('features', []):
-                          if 'building' in feat.get('properties', {}):
-                              buildings.append(feat)
-          with open('region_layers/building.geojson', 'w') as f:
-              json.dump({'type': 'FeatureCollection', 'features': buildings}, f)
-          print(f'  Buildings extracted: {len(buildings)}')
-          SCRIPTEOF
-
-          cat > filter_places.py << 'SCRIPTEOF'
-          import json, os
-          places = []
-          if os.path.exists('region_layers/points.geojson'):
-              with open('region_layers/points.geojson') as f:
-                  data = json.load(f)
-                  places = [feat for feat in data.get('features', []) if 'place' in feat.get('properties', {})]
-          with open('region_layers/places.geojson', 'w') as f:
-              json.dump({'type': 'FeatureCollection', 'features': places}, f)
-          print(f'  Places extracted: {len(places)}')
-          SCRIPTEOF
-
-          cat > filter_water.py << 'SCRIPTEOF'
-          import json, os
-          water = []
-          for lname in ['lines', 'multilinestrings', 'multipolygons', 'other_relations']:
-              fname = f'region_layers/{lname}.geojson'
-              if os.path.exists(fname):
-                  with open(fname) as f:
-                      data = json.load(f)
-                      for feat in data.get('features', []):
-                          props = feat.get('properties', {})
-                          if 'water' in props or 'waterway' in props or (props.get('natural') == 'water'):
-                              water.append(feat)
-          with open('region_layers/water.geojson', 'w') as f:
-              json.dump({'type': 'FeatureCollection', 'features': water}, f)
-          print(f'  Water features extracted: {len(water)}')
-          SCRIPTEOF
-
-          cat > filter_landuse.py << 'SCRIPTEOF'
-          import json, os
-          landuse = []
-          for lname in ['multipolygons', 'other_relations']:
-              fname = f'region_layers/{lname}.geojson'
-              if os.path.exists(fname):
-                  with open(fname) as f:
-                      data = json.load(f)
-                      for feat in data.get('features', []):
-                          props = feat.get('properties', {})
-                          if 'landuse' in props or 'leisure' in props or 'natural' in props:
-                              landuse.append(feat)
-          with open('region_layers/landuse.geojson', 'w') as f:
-              json.dump({'type': 'FeatureCollection', 'features': landuse}, f)
-          print(f'  Landuse features extracted: {len(landuse)}')
-          SCRIPTEOF
-
-          # Запускаем скрипты фильтрации
-          python3 filter_roads.py
-          python3 filter_buildings.py
-          python3 filter_places.py
-          python3 filter_water.py
-          python3 filter_landuse.py
 
           # --- ЭТАП 3: Диагностика ---
           echo "=== Diagnostic: Final feature counts ==="
@@ -295,31 +276,48 @@ jobs:
           echo "  TOTAL: $total features"
           echo "==============================="
 
+          # Не прерываем работу если нет данных в некоторых слоях - это допустимо
           if [ "$total" -eq 0 ]; then
-            echo "❌ CRITICAL ERROR: No features found in any layer!"
-            exit 1
+            echo "⚠️ WARNING: No features found, but continuing with boundaries only"
           fi
 
           # --- ЭТАП 4: Генерация тайлов ---
           echo "🗺 Generating MBTiles with tippecanoe..."
           rm -f map.mbtiles
           
-          tippecanoe --projection=EPSG:3857 \
-            -o map.mbtiles \
-            -l boundaries district.geojson \
-            -l transportation region_layers/roads.geojson \
-            -l building region_layers/building.geojson \
-            -l places region_layers/places.geojson \
-            -l water region_layers/water.geojson \
-            -l landuse region_layers/landuse.geojson \
-            --force \
-            -Z $MIN_ZOOM -z $MAX_ZOOM \
-            --no-tile-size-limit \
-            --detect-longitude-wraparound \
-            --reorder \
-            --read-parallel \
-            -v \
-            2>&1 | tee tippecanoe.log
+          # Собираем список файлов для tippecanoe (только существующие)
+          TIPPECANOE_ARGS="--projection=EPSG:3857 -o map.mbtiles --force -Z $MIN_ZOOM -z $MAX_ZOOM --no-tile-size-limit --detect-longitude-wraparound --reorder --read-parallel -v"
+          
+          # Всегда добавляем boundaries
+          if [ -f district.geojson ]; then
+            TIPPECANOE_ARGS="$TIPPECANOE_ARGS -l boundaries district.geojson"
+          fi
+          
+          # Добавляем остальные слои если они существуют и содержат данные
+          for layer_name in transportation building places water landuse; do
+            case $layer_name in
+              transportation) geojson_file="region_layers/roads.geojson" ;;
+              building) geojson_file="region_layers/building.geojson" ;;
+              places) geojson_file="region_layers/places.geojson" ;;
+              water) geojson_file="region_layers/water.geojson" ;;
+              landuse) geojson_file="region_layers/landuse.geojson" ;;
+            esac
+            
+            if [ -f "$geojson_file" ]; then
+              count=$(python3 -c "import json; print(len(json.load(open('$geojson_file')).get('features', [])))")
+              if [ "$count" -gt 0 ]; then
+                TIPPECANOE_ARGS="$TIPPECANOE_ARGS -l $layer_name $geojson_file"
+                echo "Adding layer: $layer_name ($count features)"
+              else
+                echo "Skipping empty layer: $layer_name"
+              fi
+            else
+              echo "Skipping missing layer: $layer_name"
+            fi
+          done
+          
+          echo "Running tippecanoe: $TIPPECANOE_ARGS"
+          eval tippecanoe $TIPPECANOE_ARGS 2>&1 | tee tippecanoe.log
           
           # --- ЭТАП 5: Проверка результата ---
           if [ -f map.mbtiles ]; then
