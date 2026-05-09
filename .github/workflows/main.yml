@@ -176,77 +176,22 @@ jobs:
             exit 1
           fi
           
-          echo "📥 Exporting all OSM features to GeoJSON..."
-          osmium export "$OSM_FILE" -o all_features.geojson --progress 2>&1 || {
-            echo "::error::osmium export failed"
-            exit 1
-          }
+          echo "📥 Extracting layers with osmium..."
           
-          FEATURE_COUNT=$(python3 -c "import json; print(len(json.load(open('all_features.geojson')).get('features',[])))")
-          echo "Total features exported: $FEATURE_COUNT"
+          osmium tags-filter "$OSM_FILE" w/highway -o /tmp/roads.osm.pbf --overwrite
+          osmium export /tmp/roads.osm.pbf -o region_layers/roads.geojson 2>/dev/null || echo '{"type":"FeatureCollection","features":[]}' > region_layers/roads.geojson
           
-          if [ "$FEATURE_COUNT" -eq 0 ]; then
-            echo "::error::No features exported from PBF"
-            exit 1
-          fi
+          osmium tags-filter "$OSM_FILE" w/building -o /tmp/buildings.osm.pbf --overwrite
+          osmium export /tmp/buildings.osm.pbf -o region_layers/buildings.geojson 2>/dev/null || echo '{"type":"FeatureCollection","features":[]}' > region_layers/buildings.geojson
           
-          echo "✂️ Splitting into layers by tags and geometry..."
+          osmium tags-filter "$OSM_FILE" n/place -o /tmp/places.osm.pbf --overwrite
+          osmium export /tmp/places.osm.pbf -o region_layers/places.geojson 2>/dev/null || echo '{"type":"FeatureCollection","features":[]}' > region_layers/places.geojson
           
-          cat > split_layers.py << 'PYEOF'
-          import json
+          osmium tags-filter "$OSM_FILE" wr/water wr/waterway wr/natural=water -o /tmp/water.osm.pbf --overwrite
+          osmium export /tmp/water.osm.pbf -o region_layers/water.geojson 2>/dev/null || echo '{"type":"FeatureCollection","features":[]}' > region_layers/water.geojson
           
-          with open('all_features.geojson', 'r', encoding='utf-8') as f:
-              data = json.load(f)
-          
-          features = data.get('features', [])
-          print(f"Processing {len(features)} features...")
-          
-          layers = {
-              'roads': [],
-              'buildings': [],
-              'places': [],
-              'water': [],
-              'landuse': [],
-              'boundaries': []
-          }
-          
-          for feat in features:
-              props = feat.get('properties', {}) or {}
-              geom_type = feat.get('geometry', {}).get('type', '')
-              tags = {k: v for k, v in props.items() if v is not None}
-              
-              if 'highway' in tags and geom_type in ('LineString', 'MultiLineString'):
-                  layers['roads'].append(feat)
-              
-              if 'building' in tags and geom_type in ('Polygon', 'MultiPolygon'):
-                  layers['buildings'].append(feat)
-              
-              if 'place' in tags and geom_type == 'Point':
-                  layers['places'].append(feat)
-              
-              if ('water' in tags or 'waterway' in tags or tags.get('natural') == 'water'):
-                  layers['water'].append(feat)
-              
-              if ('landuse' in tags or 'leisure' in tags or 
-                  tags.get('natural') in ('wood', 'forest', 'grassland', 'scrub', 'wetland')):
-                  layers['landuse'].append(feat)
-              
-              if tags.get('boundary') == 'administrative' and geom_type in ('Polygon', 'MultiPolygon'):
-                  layers['boundaries'].append(feat)
-          
-          for name, feats in layers.items():
-              fname = f'region_layers/{name}.geojson'
-              with open(fname, 'w', encoding='utf-8') as f:
-                  json.dump({'type': 'FeatureCollection', 'features': feats}, f)
-              print(f"  {name}: {len(feats)} features")
-          
-          if layers['boundaries']:
-              with open('district.geojson', 'w', encoding='utf-8') as f:
-                  json.dump({'type': 'FeatureCollection', 'features': layers['boundaries']}, f)
-              print("  district.geojson created from boundaries")
-          PYEOF
-          
-          python3 split_layers.py
+          osmium tags-filter "$OSM_FILE" wr/landuse wr/leisure wr/natural=wood wr/natural=forest wr/natural=grassland wr/natural=scrub wr/natural=wetland -o /tmp/landuse.osm.pbf --overwrite
+          osmium export /tmp/landuse.osm.pbf -o region_layers/landuse.geojson 2>/dev/null || echo '{"type":"FeatureCollection","features":[]}' > region_layers/landuse.geojson
           
           echo "=== Layer statistics ==="
           total=0
@@ -323,4 +268,17 @@ jobs:
           ls -lh tiles/
           ls tiles/ | grep -E '^[0-9]+$' || echo "No zoom level directories found!"
 
-      - name
+      - name: Upload Tiles Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: map-tiles
+          path: tiles/
+          retention-days: 7
+
+      - name: Commit and Push Tiles
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add tiles/ || true
+          git commit -m "Update map tiles [skip ci]" || true
+          git push || true
