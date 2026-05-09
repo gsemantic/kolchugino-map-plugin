@@ -324,20 +324,83 @@ jobs:
           echo "🗺 Generating MBTiles with tippecanoe..."
           rm -f map.mbtiles
           
-          tippecanoe --projection=EPSG:3857 \
+          # Собираем список непустых слоев для tippecanoe
+          TIPPECANOE_INPUTS=""
+          
+          # Проверяем district.geojson
+          if [ -f district.geojson ] && [ -s district.geojson ]; then
+            count=$(python3 -c "import json; print(len(json.load(open('district.geojson')).get('features', [])))" 2>/dev/null || echo "0")
+            if [ "$count" -gt 0 ]; then
+              TIPPECANOE_INPUTS="$TIPPECANOE_INPUTS -l boundaries district.geojson"
+              echo "  ✓ Adding boundaries layer ($count features)"
+            fi
+          fi
+          
+          # Проверяем roads
+          if [ -f region_layers/roads.geojson ] && [ -s region_layers/roads.geojson ]; then
+            count=$(python3 -c "import json; print(len(json.load(open('region_layers/roads.geojson')).get('features', [])))" 2>/dev/null || echo "0")
+            if [ "$count" -gt 0 ]; then
+              TIPPECANOE_INPUTS="$TIPPECANOE_INPUTS -l transportation region_layers/roads.geojson"
+              echo "  ✓ Adding transportation layer ($count features)"
+            fi
+          fi
+          
+          # Проверяем buildings
+          if [ -f region_layers/building.geojson ] && [ -s region_layers/building.geojson ]; then
+            count=$(python3 -c "import json; print(len(json.load(open('region_layers/building.geojson')).get('features', [])))" 2>/dev/null || echo "0")
+            if [ "$count" -gt 0 ]; then
+              TIPPECANOE_INPUTS="$TIPPECANOE_INPUTS -l building region_layers/building.geojson"
+              echo "  ✓ Adding building layer ($count features)"
+            fi
+          fi
+          
+          # Проверяем places
+          if [ -f region_layers/places.geojson ] && [ -s region_layers/places.geojson ]; then
+            count=$(python3 -c "import json; print(len(json.load(open('region_layers/places.geojson')).get('features', [])))" 2>/dev/null || echo "0")
+            if [ "$count" -gt 0 ]; then
+              TIPPECANOE_INPUTS="$TIPPECANOE_INPUTS -l places region_layers/places.geojson"
+              echo "  ✓ Adding places layer ($count features)"
+            fi
+          fi
+          
+          # Проверяем water
+          if [ -f region_layers/water.geojson ] && [ -s region_layers/water.geojson ]; then
+            count=$(python3 -c "import json; print(len(json.load(open('region_layers/water.geojson')).get('features', [])))" 2>/dev/null || echo "0")
+            if [ "$count" -gt 0 ]; then
+              TIPPECANOE_INPUTS="$TIPPECANOE_INPUTS -l water region_layers/water.geojson"
+              echo "  ✓ Adding water layer ($count features)"
+            fi
+          fi
+          
+          # Проверяем landuse
+          if [ -f region_layers/landuse.geojson ] && [ -s region_layers/landuse.geojson ]; then
+            count=$(python3 -c "import json; print(len(json.load(open('region_layers/landuse.geojson')).get('features', [])))" 2>/dev/null || echo "0")
+            if [ "$count" -gt 0 ]; then
+              TIPPECANOE_INPUTS="$TIPPECANOE_INPUTS -l landuse region_layers/landuse.geojson"
+              echo "  ✓ Adding landuse layer ($count features)"
+            fi
+          fi
+          
+          if [ -z "$TIPPECANOE_INPUTS" ]; then
+            echo "❌ CRITICAL ERROR: No valid layers to process!"
+            exit 1
+          fi
+          
+          echo "Running tippecanoe with layers:$TIPPECANOE_INPUTS"
+          
+          # Запускаем tippecanoe с динамическим списком слоев
+          # -f: перезаписать выходной файл
+          # -r0: не отбрасывать точки на низких зумах (важно для малого количества данных)
+          eval tippecanoe --projection=EPSG:3857 \
             -o map.mbtiles \
-            -l boundaries district.geojson \
-            -l transportation region_layers/roads.geojson \
-            -l building region_layers/building.geojson \
-            -l places region_layers/places.geojson \
-            -l water region_layers/water.geojson \
-            -l landuse region_layers/landuse.geojson \
+            $TIPPECANOE_INPUTS \
             --force \
             -Z$MIN_ZOOM -z$MAX_ZOOM \
             --no-tile-size-limit \
             --detect-longitude-wraparound \
             --reorder \
             --read-parallel \
+            -r0 \
             -v \
             2>&1 | tee tippecanoe.log
           
