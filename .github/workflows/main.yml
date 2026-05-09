@@ -171,15 +171,15 @@ jobs:
           
           mkdir -p region_layers
           
-          # Переменная для PBF файла (используем region.osm.pbf из шага загрузки)
-          OSM_FILE="region.osm.pbf"
+          # Используем исходный region.osm (XML) для конвертации через ogr2ogr
+          OSM_XML="region.osm"
           
-          # --- ЭТАП 1: Прямая выгрузка всех слоев из PBF через ogr2ogr ---
-          echo "📥 Extracting OSM layers directly from PBF..."
+          # --- ЭТАП 1: Конвертация OSM XML в GeoJSON через ogr2ogr ---
+          echo "📥 Converting OSM data to GeoJSON..."
           
           for layer in points lines multilinestrings multipolygons other_relations; do
             echo "Extracting layer: $layer"
-            if ogr2ogr -f GeoJSON -t_srs EPSG:4326 "region_layers/${layer}.geojson" "$OSM_FILE" "$layer" -skipfailures 2>&1; then
+            if ogr2ogr -f GeoJSON -t_srs EPSG:4326 "region_layers/${layer}.geojson" "$OSM_XML" "$layer" -skipfailures 2>&1; then
               if [ -f "region_layers/${layer}.geojson" ]; then
                 count=$(python3 -c "import json; print(len(json.load(open('region_layers/${layer}.geojson')).get('features', [])))")
                 echo "  ✓ $layer: $count features"
@@ -283,7 +283,7 @@ jobs:
           # --- ЭТАП 3: Диагностика ---
           echo "=== Diagnostic: Final feature counts ==="
           total=0
-          for f in region_layers/roads.geojson region_layers/building.geojson region_layers/places.geojson region_layers/water.geojson region_layers/landuse.geojson; do
+          for f in region_layers/roads.geojson region_layers/building.geojson region_layers/places.geojson region_layers/water.geojson region_layers/landuse.geojson district.geojson; do
             if [ -f "$f" ]; then
               count=$(python3 -c "import json; print(len(json.load(open('$f')).get('features', [])))")
               echo "  $f: $count features"
@@ -313,7 +313,7 @@ jobs:
             -l water region_layers/water.geojson \
             -l landuse region_layers/landuse.geojson \
             --force \
-            -Z$MIN_ZOOM -z$MAX_ZOOM \
+            -Z $MIN_ZOOM -z $MAX_ZOOM \
             --no-tile-size-limit \
             --detect-longitude-wraparound \
             --reorder \
