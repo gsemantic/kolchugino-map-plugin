@@ -1,20 +1,8 @@
-```yaml
-name: CI
-on: [push, pull_request]
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pytest
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-      - name: Run tests
-        run: pytest
+```gitignore
+# Configuration and workflow files should not be ignored
+# Since only .github/workflows/main.yml was modified and it's a config file,
+# no additional ignores are needed beyond standard ones if present
+
+# Keep any existing rules that might be relevant
+# No new ignores needed for this change set
 ```

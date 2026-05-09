@@ -206,16 +206,29 @@ jobs:
             echo "No points layer found, created empty places.geojson"
           fi
           
+          # Диагностика: проверяем количество объектов в каждом слое
+          echo "=== Diagnostic: Feature counts ==="
+          for f in district.geojson region_layers/roads.geojson region_layers/buildings.geojson region_layers/places.geojson; do
+            if [ -f "$f" ]; then
+              count=$(python3 -c "import json; print(len(json.load(open('$f')).get('features', [])))")
+              echo "$f: $count features"
+            else
+              echo "$f: FILE NOT FOUND"
+            fi
+          done
+          echo "==============================="
+
           # Создаем тайлы с использованием tippecanoe
           rm -f map.mbtiles
-          tippecanoe -zg --projection=EPSG:3857 \
+          tippecanoe --projection=EPSG:3857 \
             -o map.mbtiles \
             -l boundaries district.geojson \
             -l roads region_layers/roads.geojson \
             -l buildings region_layers/buildings.geojson \
             -l places region_layers/places.geojson \
             --force \
-            -Z$MIN_ZOOM -z$MAX_ZOOM
+            -Z$MIN_ZOOM -z$MAX_ZOOM \
+            -v
           
           # Очищаем старую папку с тайлами (mb-util требует, чтобы папка не существовала)
           rm -rf tiles/
