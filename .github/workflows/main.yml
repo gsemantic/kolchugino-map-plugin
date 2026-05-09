@@ -48,21 +48,21 @@ jobs:
         run: |
           echo "Downloading OSM data for Vladimir Region via Overpass API..."
           
+          # ИСПРАВЛЕНИЕ: добавлена рекурсивная выборка nodes (>; out skel qt;)
+          # Без этого ways и relations не имеют геометрии — ogr2ogr вернет 0 features
           cat > overpass-query.ql << 'QUERYEOF'
           [out:xml][timeout:300];
           (
-            // Загружаем все дороги, здания и места в области вокруг Кольчугино (центр: 56.294425, 39.375751)
             way["highway"](56.24,39.32,56.34,39.43);
             node["place"](56.24,39.32,56.34,39.43);
             way["building"](56.24,39.32,56.34,39.43);
-            
-            // Загружаем административные границы всех уровней для Владимирской области
             relation["boundary"="administrative"]["admin_level"~"4|5|6|7"]["name"~"Владимир|Кольчугин"];
           );
           out body;
+          >;
+          out skel qt;
           QUERYEOF
           
-          # Retry logic for Overpass API (up to 3 attempts with delays)
           MAX_RETRIES=3
           RETRY_COUNT=0
           SUCCESS=false
@@ -78,7 +78,6 @@ jobs:
               "https://overpass-api.de/api/interpreter"
             
             if [ -f region.osm ] && [ -s region.osm ]; then
-              # Check if response contains HTML error page
               if ! head -c 200 region.osm | grep -qi "<html"; then
                 SUCCESS=true
                 echo "Download successful!"
@@ -108,6 +107,17 @@ jobs:
           fi
           
           echo "Response size: $(du -h region.osm | cut -f1)"
+          
+          # ИСПРАВЛЕНИЕ: проверим, что в файле есть ways с геометрией
+          WAY_COUNT=$(grep -c '<way' region.osm || echo "0")
+          NODE_COUNT=$(grep -c '<node' region.osm || echo "0")
+          echo "OSM XML contains: $WAY_COUNT ways, $NODE_COUNT nodes"
+          
+          if [ "$NODE_COUNT" -eq 0 ] || [ "$WAY_COUNT" -eq 0 ]; then
+            echo "::error::Downloaded OSM data seems incomplete (no ways or nodes)"
+            exit 1
+          fi
+          
           osmium cat region.osm -o region.osm.pbf --overwrite
           echo "PBF size: $(du -h region.osm.pbf | cut -f1)"
 
@@ -117,7 +127,6 @@ jobs:
           DISTRICT_NAME="${{ github.event.inputs.district_name || 'Кольчугинский район' }}"
           echo "Searching for boundary: $DISTRICT_NAME"
           
-          # Filter administrative boundaries
           osmium tags-filter -o boundary.osm.pbf region.osm.pbf \
             r/boundary=administrative \
             --overwrite
@@ -127,28 +136,21 @@ jobs:
             exit 1
           fi
           
-          # Convert PBF to OSM XML first
           osmium cat boundary.osm.pbf -o boundary.osm
 
-          # Создаем директорию для слоев
           mkdir -p osm_layers
 
-          # Конвертируем каждый слой OSM отдельно в GeoJSON
           for layer in points lines multilinestrings multipolygons other_relations; do
             if ogr2ogr -f GeoJSON "osm_layers/${layer}.geojson" boundary.osm "$layer" 2>/dev/null; then
               echo "Converted layer: $layer"
             fi
           done
 
-          # Объединяем все GeoJSON файлы в один
           python3 scripts/merge_layers.py
-
-          # Поиск района в GeoJSON (используем улучшенный скрипт)
           export DISTRICT_NAME="$DISTRICT_NAME" && python3 scripts/find_district_boundary.py
 
           if [ ! -f district.geojson ] || [ ! -s district.geojson ]; then
             echo "::warning::District boundary not found, using full region data"
-            # Если район не найден, используем все границы из файла
             if [ -f osm_layers/multipolygons.geojson ]; then
               cp osm_layers/multipolygons.geojson district.geojson
             elif [ -f region_combined.geojson ]; then
@@ -171,7 +173,6 @@ jobs:
           
           mkdir -p region_layers
           
-          # Используем файл, скачанный через Overpass API
           OSM_FILE="region.osm.pbf"
           
           if [ ! -f "$OSM_FILE" ] || [ ! -s "$OSM_FILE" ]; then
@@ -181,35 +182,46 @@ jobs:
           
           echo "📥 Extracting OSM layers using osmium and ogr2ogr..."
           
-          # --- ЭТАП 1: Конвертация PBF в OSM XML для надежной обработки ogr2ogr ---
-          # ogr2ogr часто плохо читает PBF напрямую, особенно способы (ways)
-          echo "Converting PBF to OSM XML for stable processing..."
-          osmium cat "$OSM_FILE" -o region_full.osm
+          # ИСПРАВЛЕНИЕ: используем osmium export вместо ogr2ogr для надежности
+          # ogr2ogr часто теряет геометрию при чтении OSM, osmium export — стабильнее
+          echo "Converting PBF to GeoJSON layers with osmium export..."
           
-          # --- ЭТАП 2: Выгрузка слоев из OSM XML через ogr2ogr ---
-          OSM_XML="region_full.osm"
+          # Points
+          osmium export "$OSM_FILE" -o region_layers/points.geojson --geometry-type=point 2>/dev/null || \
+            ogr2ogr -f GeoJSON region_layers/points.geojson region.osm points -skipfailures 2>/dev/null || \
+            echo '{"type":"FeatureCollection","features":[]}' > region_layers/points.geojson
           
-          for layer in points lines multilinestrings multipolygons other_relations; do
-            echo "Extracting layer: $layer"
-            # Создаем пустой файл заранее, чтобы скрипты ниже не падали
-            echo '{"type":"FeatureCollection","features":[]}' > "region_layers/${layer}.geojson"
-            
-            if ogr2ogr -f GeoJSON -t_srs EPSG:4326 "region_layers/${layer}.geojson" "$OSM_XML" "$layer" -skipfailures 2>&1; then
-              if [ -f "region_layers/${layer}.geojson" ]; then
-                count=$(python3 -c "import json; print(len(json.load(open('region_layers/${layer}.geojson')).get('features', [])))")
-                echo "  ✓ $layer: $count features"
-              else
-                echo "  ⚠ $layer: file not created"
-              fi
-            else
-              echo "  ⚠ $layer: ogr2ogr failed, keeping empty file"
+          # Lines (roads, waterways)
+          osmium export "$OSM_FILE" -o region_layers/lines.geojson --geometry-type=linestring 2>/dev/null || \
+            ogr2ogr -f GeoJSON region_layers/lines.geojson region.osm lines -skipfailures 2>/dev/null || \
+            echo '{"type":"FeatureCollection","features":[]}' > region_layers/lines.geojson
+          
+          # Multilinestrings
+          osmium export "$OSM_FILE" -o region_layers/multilinestrings.geojson --geometry-type=linestring 2>/dev/null || \
+            ogr2ogr -f GeoJSON region_layers/multilinestrings.geojson region.osm multilinestrings -skipfailures 2>/dev/null || \
+            echo '{"type":"FeatureCollection","features":[]}' > region_layers/multilinestrings.geojson
+          
+          # Multipolygons (buildings, landuse, water)
+          osmium export "$OSM_FILE" -o region_layers/multipolygons.geojson --geometry-type=polygon 2>/dev/null || \
+            ogr2ogr -f GeoJSON region_layers/multipolygons.geojson region.osm multipolygons -skipfailures 2>/dev/null || \
+            echo '{"type":"FeatureCollection","features":[]}' > region_layers/multipolygons.geojson
+          
+          # Other relations
+          osmium export "$OSM_FILE" -o region_layers/other_relations.geojson 2>/dev/null || \
+            ogr2ogr -f GeoJSON region_layers/other_relations.geojson region.osm other_relations -skipfailures 2>/dev/null || \
+            echo '{"type":"FeatureCollection","features":[]}' > region_layers/other_relations.geojson
+          
+          # Диагностика
+          for f in region_layers/*.geojson; do
+            if [ -f "$f" ]; then
+              count=$(python3 -c "import json; data=json.load(open('$f')); print(len(data.get('features',[])))" 2>/dev/null || echo "0")
+              echo "  $f: $count features"
             fi
           done
 
-          # --- ЭТАП 2: Фильтрация по тегам ---
+          # --- Фильтрация по тегам ---
           echo "✂️ Filtering features by tags..."
           
-          # Создаем скрипты для фильтрации
           cat > filter_roads.py << 'SCRIPTEOF'
           import json, os
           roads = []
@@ -286,14 +298,13 @@ jobs:
           print('  Landuse features extracted: ' + str(len(landuse)))
           SCRIPTEOF
 
-          # Запускаем скрипты фильтрации
           python3 filter_roads.py
           python3 filter_buildings.py
           python3 filter_places.py
           python3 filter_water.py
           python3 filter_landuse.py
 
-          # --- ЭТАП 3: Диагностика ---
+          # --- Диагностика ---
           echo "=== Diagnostic: Final feature counts ==="
           total=0
           for f in region_layers/roads.geojson region_layers/building.geojson region_layers/places.geojson region_layers/water.geojson region_layers/landuse.geojson; do
@@ -313,28 +324,42 @@ jobs:
             exit 1
           fi
 
-          # --- ЭТАП 4: Генерация тайлов ---
+          # --- Генерация тайлов ---
           echo "🗺 Generating MBTiles with tippecanoe..."
           rm -f map.mbtiles
           
-          tippecanoe --projection=EPSG:3857 \
-            -o map.mbtiles \
-            -l boundaries district.geojson \
-            -l transportation region_layers/roads.geojson \
-            -l building region_layers/building.geojson \
-            -l places region_layers/places.geojson \
-            -l water region_layers/water.geojson \
-            -l landuse region_layers/landuse.geojson \
-            --force \
-            -Z$MIN_ZOOM -z$MAX_ZOOM \
-            --no-tile-size-limit \
-            --detect-longitude-wraparound \
-            --reorder \
-            --read-parallel \
-            -v \
-            2>&1 | tee tippecanoe.log
+          # ИСПРАВЛЕНИЕ: собираем только существующие и непустые файлы для tippecanoe
+          # чтобы избежать ошибок на пустых слоях
+          TIPPECANOE_ARGS="--projection=EPSG:3857 -o map.mbtiles --force -Z$MIN_ZOOM -z$MAX_ZOOM --no-tile-size-limit --detect-longitude-wraparound --reorder --read-parallel -v"
           
-          # --- ЭТАП 5: Проверка результата ---
+          # Проверяем каждый слой перед добавлением
+          add_layer() {
+            local name="$1"
+            local file="$2"
+            if [ -f "$file" ]; then
+              local count=$(python3 -c "import json; print(len(json.load(open('$file')).get('features', [])))")
+              if [ "$count" -gt 0 ]; then
+                TIPPECANOE_ARGS="$TIPPECANOE_ARGS -l $name $file"
+                echo "  Adding layer '$name' ($count features)"
+              else
+                echo "  Skipping empty layer '$name'"
+              fi
+            else
+              echo "  Skipping missing layer '$name'"
+            fi
+          }
+          
+          add_layer "boundaries" "district.geojson"
+          add_layer "transportation" "region_layers/roads.geojson"
+          add_layer "building" "region_layers/building.geojson"
+          add_layer "places" "region_layers/places.geojson"
+          add_layer "water" "region_layers/water.geojson"
+          add_layer "landuse" "region_layers/landuse.geojson"
+          
+          echo "Running: tippecanoe $TIPPECANOE_ARGS"
+          tippecanoe $TIPPECANOE_ARGS 2>&1 | tee tippecanoe.log
+          
+          # --- Проверка результата ---
           if [ -f map.mbtiles ]; then
             SIZE=$(ls -lh map.mbtiles | awk '{print $5}')
             echo "✅ Generated map.mbtiles ($SIZE)"
@@ -346,13 +371,12 @@ jobs:
             exit 1
           fi
           
-          # --- ЭТАП 6: Извлечение в папку tiles ---
+          # --- Извлечение в папку tiles ---
           rm -rf tiles/
           mkdir -p tiles
           echo "📂 Extracting tiles with mb-util..."
           mb-util --image_format=pbf map.mbtiles tiles/
           
-          # Добавляем metadata.json для совместимости
           if [ -f tiles/metadata.json ]; then
             echo "metadata.json exists"
           else
