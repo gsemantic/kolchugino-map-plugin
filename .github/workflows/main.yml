@@ -181,17 +181,67 @@ jobs:
             fi
           done
           
-          # Объединяем все слои региона в один файл
-          python3 scripts/merge_region_layers.py
+          # Фильтруем данные по типам объектов для каждого слоя
+          
+          # 1. Дороги (из lines)
+          if [ -f region_layers/lines.geojson ]; then
+            python3 -c "
+import json
+with open('region_layers/lines.geojson', 'r') as f:
+    data = json.load(f)
+roads = [f for f in data.get('features', []) if 'highway' in f.get('properties', {})]
+with open('region_layers/roads.geojson', 'w') as f:
+    json.dump({'type': 'FeatureCollection', 'features': roads}, f)
+print(f'Extracted {len(roads)} road features')
+"
+          else
+            echo '{"type":"FeatureCollection","features":[]}' > region_layers/roads.geojson
+            echo "No lines layer found, created empty roads.geojson"
+          fi
+          
+          # 2. Здания (из multipolygons и других полигонов)
+          python3 -c "
+import json
+features = []
+for layer_name in ['multipolygons', 'other_relations']:
+    filepath = f'region_layers/{layer_name}.geojson'
+    try:
+        with open(filepath, 'r') as f:
+            data = json.load(f)
+        buildings = [f for f in data.get('features', []) if 'building' in f.get('properties', {})]
+        features.extend(buildings)
+        print(f'Extracted {len(buildings)} building features from {layer_name}')
+    except FileNotFoundError:
+        pass
+with open('region_layers/buildings.geojson', 'w') as f:
+    json.dump({'type': 'FeatureCollection', 'features': features}, f)
+print(f'Total buildings: {len(features)}')
+"
+          
+          # 3. Места (из points)
+          if [ -f region_layers/points.geojson ]; then
+            python3 -c "
+import json
+with open('region_layers/points.geojson', 'r') as f:
+    data = json.load(f)
+places = [f for f in data.get('features', []) if 'place' in f.get('properties', {})]
+with open('region_layers/places.geojson', 'w') as f:
+    json.dump({'type': 'FeatureCollection', 'features': places}, f)
+print(f'Extracted {len(places)} place features')
+"
+          else
+            echo '{"type":"FeatureCollection","features":[]}' > region_layers/places.geojson
+            echo "No points layer found, created empty places.geojson"
+          fi
           
           # Создаем тайлы с использованием tippecanoe
           rm -f map.mbtiles
           tippecanoe -zg --projection=EPSG:3857 \
             -o map.mbtiles \
             -l boundaries district.geojson \
-            -l roads region_combined.geojson \
-            -l buildings region_combined.geojson \
-            -l places region_combined.geojson \
+            -l roads region_layers/roads.geojson \
+            -l buildings region_layers/buildings.geojson \
+            -l places region_layers/places.geojson \
             --force \
             -Z$MIN_ZOOM -z$MAX_ZOOM
           
