@@ -1,184 +1,55 @@
-      - name: Generate Map Tiles
-        id: generate_tiles
+     name: Generate Offline Map Tiles
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_zoom:
+        description: 'Min zoom level'
+        required: true
+        default: '12'
+      max_zoom:
+        description: 'Max zoom level'
+        required: true
+        default: '18'
+      district_name:
+        description: 'District name for boundary search'
+        required: true
+        default: 'Кольчугинский район'
+  schedule:
+    - cron: '0 3 * * 0'
+
+jobs:
+  generate-tiles:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
         run: |
-          MIN_ZOOM="${{ github.event.inputs.min_zoom || 12 }}"
-          MAX_ZOOM="${{ github.event.inputs.max_zoom || 18 }}"
+          sudo apt-get update
+          sudo apt-get install -y \
+            tippecanoe \
+            python3-pip \
+            osmium-tool \
+            gdal-bin \
+            sqlite3 \
+            curl \
+            jq
+          pip3 install mbutil
+
+      - name: Download OSM Data via Overpass API
+        id: download_overpass
+        run: |
+          echo "Downloading OSM data for Vladimir Region via Overpass API..."
           
-          echo "Generating tiles from zoom $MIN_ZOOM to $MAX_ZOOM..."
-          mkdir -p region_layers
-          
-          OSM_FILE="region.osm.pbf"
-          if [ ! -f "$OSM_FILE" ] || [ ! -s "$OSM_FILE" ]; then
-            echo "::error::OSM PBF file not found or empty"
-            exit 1
-          fi
-          
-          # --- ЭТАП 1: Экспорт ВСЕХ объектов из PBF в один GeoJSON ---
-          echo "📥 Exporting all OSM features to GeoJSON..."
-          osmium export "$OSM_FILE" -o all_features.geojson --progress 2>&1 || {
-            echo "::error::osmium export failed"
-            exit 1
-          }
-          
-          FEATURE_COUNT=$(python3 -c "import json; print(len(json.load(open('all_features.geojson')).get('features',[])))")
-          echo "Total features exported: $FEATURE_COUNT"
-          
-          if [ "$FEATURE_COUNT" -eq 0 ]; then
-            echo "::error::No features exported from PBF"
-            exit 1
-          fi
-          
-          # --- ЭТАП 2: Разделение на слои Python-скриптом ---
-          echo "✂️ Splitting into layers by tags and geometry..."
-          
-          cat > split_layers.py << 'PYEOF'
-          import json
-          import sys
-          
-          with open('all_features.geojson', 'r', encoding='utf-8') as f:
-              data = json.load(f)
-          
-          features = data.get('features', [])
-          print(f"Processing {len(features)} features...")
-          
-          layers = {
-              'roads': [],
-              'buildings': [],
-              'places': [],
-              'water': [],
-              'landuse': [],
-              'boundaries': []
-          }
-          
-          for feat in features:
-              props = feat.get('properties', {}) or {}
-              geom_type = feat.get('geometry', {}).get('type', '')
-              tags = {k: v for k, v in props.items() if v is not None}
-              
-              # Roads: любой highway
-              if 'highway' in tags:
-                  if geom_type in ('LineString', 'MultiLineString'):
-                      layers['roads'].append(feat)
-                  elif geom_type == 'Polygon':
-                      # Редко, но бывает (площадки и т.п.) — конвертируем в линию
-                      feat['geometry']['type'] = 'LineString'
-                      feat['geometry']['coordinates'] = feat['geometry']['coordinates'][0]
-                      layers['roads'].append(feat)
-              
-              # Buildings
-              if 'building' in tags:
-                  if geom_type in ('Polygon', 'MultiPolygon'):
-                      layers['buildings'].append(feat)
-              
-              # Places
-              if 'place' in tags:
-                  if geom_type == 'Point':
-                      layers['places'].append(feat)
-              
-              # Water
-              if 'water' in tags or 'waterway' in tags or tags.get('natural') == 'water':
-                  layers['water'].append(feat)
-              
-              # Landuse
-              if 'landuse' in tags or 'leisure' in tags or tags.get('natural') in ('wood', 'forest', 'grassland', 'scrub', 'wetland'):
-                  layers['landuse'].append(feat)
-              
-              # Boundaries
-              if tags.get('boundary') == 'administrative':
-                  if geom_type in ('Polygon', 'MultiPolygon'):
-                      layers['boundaries'].append(feat)
-          
-          for name, feats in layers.items():
-              fname = f'region_layers/{name}.geojson'
-              with open(fname, 'w', encoding='utf-8') as f:
-                  json.dump({'type': 'FeatureCollection', 'features': feats}, f)
-              print(f"  {name}: {len(feats)} features")
-          
-          # Сохраняем boundaries также как district.geojson для совместимости
-          if layers['boundaries']:
-              with open('district.geojson', 'w', encoding='utf-8') as f:
-                  json.dump({'type': 'FeatureCollection', 'features': layers['boundaries']}, f)
-              print("  district.geojson created from boundaries")
-          PYEOF
-          
-          python3 split_layers.py
-          
-          # --- ЭТАП 3: Диагностика ---
-          echo "=== Layer statistics ==="
-          total=0
-          for f in region_layers/*.geojson; do
-            if [ -f "$f" ]; then
-              count=$(python3 -c "import json; print(len(json.load(open('$f')).get('features', [])))")
-              echo "  $(basename $f): $count features"
-              total=$((total + count))
-            fi
-          done
-          echo "  TOTAL: $total features"
-          echo "========================"
-          
-          if [ "$total" -eq 0 ]; then
-            echo "❌ CRITICAL ERROR: No features in any layer!"
-            exit 1
-          fi
-          
-          # --- ЭТАП 4: Генерация тайлов ---
-          echo "🗺 Generating MBTiles with tippecanoe..."
-          rm -f map.mbtiles
-          
-          TIPPECANOE_ARGS="--projection=EPSG:3857 -o map.mbtiles --force -Z$MIN_ZOOM -z$MAX_ZOOM --no-tile-size-limit --detect-longitude-wraparound --reorder --read-parallel -v"
-          
-          add_layer() {
-            local name="$1"
-            local file="$2"
-            if [ -f "$file" ]; then
-              local count=$(python3 -c "import json; print(len(json.load(open('$file')).get('features', [])))")
-              if [ "$count" -gt 0 ]; then
-                TIPPECANOE_ARGS="$TIPPECANOE_ARGS -l $name $file"
-                echo "  ✓ Adding layer '$name' ($count features)"
-              else
-                echo "  ⚠ Skipping empty layer '$name'"
-              fi
-            else
-              echo "  ⚠ Skipping missing layer '$name'"
-            fi
-          }
-          
-          # Используем district.geojson если он есть, иначе boundaries из region_layers
-          if [ -f "district.geojson" ] && [ -s "district.geojson" ]; then
-            add_layer "boundaries" "district.geojson"
-          else
-            add_layer "boundaries" "region_layers/boundaries.geojson"
-          fi
-          
-          add_layer "transportation" "region_layers/roads.geojson"
-          add_layer "building" "region_layers/buildings.geojson"
-          add_layer "places" "region_layers/places.geojson"
-          add_layer "water" "region_layers/water.geojson"
-          add_layer "landuse" "region_layers/landuse.geojson"
-          
-          echo "Running: tippecanoe $TIPPECANOE_ARGS"
-          tippecanoe $TIPPECANOE_ARGS 2>&1 | tee tippecanoe.log
-          
-          # --- ЭТАП 5: Проверка ---
-          if [ -f map.mbtiles ]; then
-            SIZE=$(ls -lh map.mbtiles | awk '{print $5}')
-            echo "✅ Generated map.mbtiles ($SIZE)"
-            sqlite3 map.mbtiles "SELECT zoom_level, COUNT(*) as tile_count FROM tiles GROUP BY zoom_level ORDER BY zoom_level;" || true
-          else
-            echo "❌ Failed to generate map.mbtiles"
-            exit 1
-          fi
-          
-          # --- ЭТАП 6: Извлечение тайлов ---
-          rm -rf tiles/
-          mkdir -p tiles
-          echo "📂 Extracting tiles with mb-util..."
-          mb-util --image_format=pbf map.mbtiles tiles/
-          
-          if [ ! -f tiles/metadata.json ]; then
-            echo '{}' > tiles/metadata.json
-          fi
-          
-          echo "✅ Done"
-          ls -lh tiles/
-          ls tiles/ | grep -E '^[0-9]+$' || echo "No zoom level directories found!"
+          cat > overpass-query.ql << 'QUERYEOF'
+          [out:xml][timeout:300];
+          (
+            way["highway"](56.24,39.32,56.34,39.43);
+            node["place"](56.24,39.32,56.34
