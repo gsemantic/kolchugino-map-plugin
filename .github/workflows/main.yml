@@ -196,48 +196,51 @@ jobs:
           # --- ЭТАП 2: Фильтрация по тегам ---
           echo "✂️ Filtering features by tags..."
           
-          # 1. Дороги (highway) из слоя lines
-          python3 << 'PYEOF'
-import json, os
-roads = []
-if os.path.exists('region_layers/lines.geojson'):
-    with open('region_layers/lines.geojson') as f:
-        data = json.load(f)
-        roads = [feat for feat in data.get('features', []) if 'highway' in feat.get('properties', {})]
-with open('region_layers/roads.geojson', 'w') as f:
-    json.dump({"type": "FeatureCollection", "features": roads}, f)
-print(f"  Roads extracted: {len(roads)}")
-PYEOF
+          # Создаем скрипты для фильтрации
+          cat > filter_roads.py << 'SCRIPTEOF'
+          import json, os
+          roads = []
+          if os.path.exists('region_layers/lines.geojson'):
+              with open('region_layers/lines.geojson') as f:
+                  data = json.load(f)
+                  roads = [feat for feat in data.get('features', []) if 'highway' in feat.get('properties', {})]
+          with open('region_layers/roads.geojson', 'w') as f:
+              json.dump({'type': 'FeatureCollection', 'features': roads}, f)
+          print(f'  Roads extracted: {len(roads)}')
+          SCRIPTEOF
 
-          # 2. Здания (building) из multipolygons и other_relations
-          python3 << 'PYEOF'
-import json, os
-buildings = []
-for lname in ['multipolygons', 'other_relations']:
-    fname = f'region_layers/{lname}.geojson'
-    if os.path.exists(fname):
-        with open(fname) as f:
+          cat > filter_buildings.py << 'SCRIPTEOF'
+          import json, os
+          buildings = []
+          for lname in ['multipolygons', 'other_relations']:
+              fname = f'region_layers/{lname}.geojson'
+              if os.path.exists(fname):
+                  with open(fname) as f:
             data = json.load(f)
             for feat in data.get('features', []):
                 if 'building' in feat.get('properties', {}):
                     buildings.append(feat)
-with open('region_layers/buildings.geojson', 'w') as f:
-    json.dump({"type": "FeatureCollection", "features": buildings}, f)
-print(f"  Buildings extracted: {len(buildings)}")
-PYEOF
+          with open('region_layers/buildings.geojson', 'w') as f:
+              json.dump({'type': 'FeatureCollection', 'features': buildings}, f)
+          print(f'  Buildings extracted: {len(buildings)}')
+          SCRIPTEOF
 
-          # 3. Места (place) из points
-          python3 << 'PYEOF'
-import json, os
-places = []
-if os.path.exists('region_layers/points.geojson'):
-    with open('region_layers/points.geojson') as f:
-        data = json.load(f)
-        places = [feat for feat in data.get('features', []) if 'place' in feat.get('properties', {})]
-with open('region_layers/places.geojson', 'w') as f:
-    json.dump({"type": "FeatureCollection", "features": places}, f)
-print(f"  Places extracted: {len(places)}")
-PYEOF
+          cat > filter_places.py << 'SCRIPTEOF'
+          import json, os
+          places = []
+          if os.path.exists('region_layers/points.geojson'):
+              with open('region_layers/points.geojson') as f:
+                  data = json.load(f)
+                  places = [feat for feat in data.get('features', []) if 'place' in feat.get('properties', {})]
+          with open('region_layers/places.geojson', 'w') as f:
+              json.dump({'type': 'FeatureCollection', 'features': places}, f)
+          print(f'  Places extracted: {len(places)}')
+          SCRIPTEOF
+
+          # Запускаем скрипты фильтрации
+          python3 filter_roads.py
+          python3 filter_buildings.py
+          python3 filter_places.py
 
           # --- ЭТАП 3: Диагностика ---
           echo "=== Diagnostic: Final feature counts ==="
