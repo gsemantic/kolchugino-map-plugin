@@ -192,82 +192,220 @@ jobs:
 
           echo "✂️ Filtering features by tags..."
           
-          cat > filter_roads.py << 'SCRIPTEOF'
+          # Один Python-скрипт вместо 5 heredoc'ов — надёжнее
+          python3 << 'PYEOF'
           import json, os
-          roads = []
-          for lname in ['lines', 'multilinestrings']:
-              fname = 'region_layers/' + lname + '.geojson'
-              if os.path.exists(fname):
-                  with open(fname) as f:
-                      data = json.load(f)
-                      roads.extend([feat for feat in data.get('features', []) if 'highway' in feat.get('properties', {})])
-          with open('region_layers/roads.geojson', 'w') as f:
-              json.dump({'type': 'FeatureCollection', 'features': roads}, f)
-          print('  Roads extracted: ' + str(len(roads)))
-          SCRIPTEOF
 
-          cat > filter_buildings.py << 'SCRIPTEOF'
-          import json, os
-          buildings = []
-          for lname in ['multipolygons', 'other_relations']:
-              fname = 'region_layers/' + lname + '.geojson'
-              if os.path.exists(fname):
-                  with open(fname) as f:
-                      data = json.load(f)
-                      for feat in data.get('features', []):
-                          if 'building' in feat.get('properties', {}):
-                              buildings.append(feat)
-          with open('region_layers/building.geojson', 'w') as f:
-              json.dump({'type': 'FeatureCollection', 'features': buildings}, f)
-          print('  Buildings extracted: ' + str(len(buildings)))
-          SCRIPTEOF
+          def load_features(*files):
+              features = []
+              for fname in files:
+                  if os.path.exists(fname):
+                      with open(fname) as f:
+                          data = json.load(f)
+                          features.extend(data.get('features', []))
+              return features
 
-          cat > filter_places.py << 'SCRIPTEOF'
-          import json, os
-          places = []
-          if os.path.exists('region_layers/points.geojson'):
-              with open('region_layers/points.geojson') as f:
-                  data = json.load(f)
-                  places = [feat for feat in data.get('features', []) if 'place' in feat.get('properties', {})]
-          with open('region_layers/places.geojson', 'w') as f:
-              json.dump({'type': 'FeatureCollection', 'features': places}, f)
-          print('  Places extracted: ' + str(len(places)))
-          SCRIPTEOF
+          def save(name, features):
+              with open(f'region_layers/{name}.geojson', 'w') as f:
+                  json.dump({'type': 'FeatureCollection', 'features': features}, f)
+              print(f'  {name}: {len(features)} features')
 
-          cat > filter_water.py << 'SCRIPTEOF'
-          import json, os
+          # Roads
+          roads = [f for f in load_features('region_layers/lines.geojson', 'region_layers/multilinestrings.geojson')
+                   if 'highway' in f.get('properties', {})]
+          save('roads', roads)
+
+          # Buildings
+          buildings = [f for f in load_features('region_layers/multipolygons.geojson', 'region_layers/other_relations.geojson')
+                       if 'building' in f.get('properties', {})]
+          save('building', buildings)
+
+          # Places
+          places = [f for f in load_features('region_layers/points.geojson')
+                    if 'place' in f.get('properties', {})]
+          save('places', places)
+
+          # Water
           water = []
-          for lname in ['lines', 'multilinestrings', 'multipolygons', 'other_relations']:
-              fname = 'region_layers/' + lname + '.geojson'
-              if os.path.exists(fname):
-                  with open(fname) as f:
-                      data = json.load(f)
-                      for feat in data.get('features', []):
-                          props = feat.get('properties', {})
-                          if 'water' in props or 'waterway' in props or (props.get('natural') == 'water'):
-                              water.append(feat)
-          with open('region_layers/water.geojson', 'w') as f:
-              json.dump({'type': 'FeatureCollection', 'features': water}, f)
-          print('  Water features extracted: ' + str(len(water)))
-          SCRIPTEOF
+          for f in load_features('region_layers/lines.geojson', 'region_layers/multilinestrings.geojson',
+                                 'region_layers/multipolygons.geojson', 'region_layers/other_relations.geojson'):
+              props = f.get('properties', {})
+              if 'water' in props or 'waterway' in props or props.get('natural') == 'water':
+                  water.append(f)
+          save('water', water)
 
-          cat > filter_landuse.py << 'SCRIPTEOF'
-          import json, os
+          # Landuse
           landuse = []
-          for lname in ['multipolygons', 'other_relations']:
-              fname = 'region_layers/' + lname + '.geojson'
-              if os.path.exists(fname):
-                  with open(fname) as f:
-                      data = json.load(f)
-                      for feat in data.get('features', []):
-                          props = feat.get('properties', {})
-                          if 'landuse' in props or 'leisure' in props or 'natural' in props:
-                              landuse.append(feat)
-          with open('region_layers/landuse.geojson', 'w') as f:
-              json.dump({'type': 'FeatureCollection', 'features': landuse}, f)
-          print('  Landuse features extracted: ' + str(len(landuse)))
-          SCRIPTEOF
+          for f in load_features('region_layers/multipolygons.geojson', 'region_layers/other_relations.geojson'):
+              props = f.get('properties', {})
+              if 'landuse' in props or 'leisure' in props or 'natural' in props:
+                  landuse.append(f)
+          save('landuse', landuse)
+          PYEOF
 
-          python3 filter_roads.py
-          python3 filter_buildings.py
-          python3 filter_pl
+          echo "=== Sanitizing GeoJSON files ==="
+          python3 << 'PYEOF'
+          import json, os, sys
+
+          def sanitize(infile, outfile):
+              if not os.path.exists(infile):
+                  print(f"  File not found: {infile}")
+                  return 0
+              with open(infile) as f:
+                  try:
+                      data = json.load(f)
+                  except json.JSONDecodeError as e:
+                      print(f"  Invalid JSON in {infile}: {e}")
+                      return 0
+              
+              features = data.get('features', [])
+              clean = []
+              
+              for feat in features:
+                  geom = feat.get('geometry')
+                  if geom is None:
+                      continue
+                  coords = geom.get('coordinates')
+                  if coords is None:
+                      continue
+                  
+                  gtype = geom.get('type', '')
+                  if gtype == 'Point':
+                      if not coords or len(coords) < 2:
+                          continue
+                  elif gtype in ('LineString', 'MultiPoint'):
+                      if not coords or len(coords) < 1:
+                          continue
+                  elif gtype in ('Polygon', 'MultiLineString'):
+                      if not coords or len(coords) < 1:
+                          continue
+                  elif gtype in ('MultiPolygon', 'GeometryCollection'):
+                      if not coords or len(coords) < 1:
+                          continue
+                  
+                  def check_coords(c):
+                      if isinstance(c, (list, tuple)):
+                          if len(c) == 2 and isinstance(c[0], (int, float)) and isinstance(c[1], (int, float)):
+                              lon, lat = c
+                              return -180 <= lon <= 180 and -90 <= lat <= 90
+                          return all(check_coords(x) for x in c)
+                      return True
+                  
+                  if not check_coords(coords):
+                      continue
+                  
+                  clean.append(feat)
+              
+              data['features'] = clean
+              with open(outfile, 'w') as f:
+                  json.dump(data, f)
+              print(f"  {os.path.basename(infile)}: {len(features)} -> {len(clean)} features")
+              return len(clean)
+          
+          for f in sys.argv[1:]:
+              sanitize(f, f)
+          PYEOF district.geojson region_layers/roads.geojson region_layers/building.geojson region_layers/places.geojson region_layers/water.geojson region_layers/landuse.geojson
+
+          echo "=== Diagnostic: Final feature counts ==="
+          total=0
+          for f in region_layers/roads.geojson region_layers/building.geojson region_layers/places.geojson region_layers/water.geojson region_layers/landuse.geojson; do
+            if [ -f "$f" ]; then
+              count=$(python3 -c "import json; print(len(json.load(open('$f')).get('features', [])))")
+              echo "  $f: $count features"
+              total=$((total + count))
+            else
+              echo "  $f: FILE NOT FOUND"
+            fi
+          done
+          echo "  TOTAL: $total features"
+          echo "==============================="
+
+          if [ "$total" -eq 0 ]; then
+            echo "❌ CRITICAL ERROR: No features found in any layer!"
+            exit 1
+          fi
+
+          echo "🗺 Generating tiles with tippecanoe directly to directory..."
+          rm -rf tiles/
+          
+          # Динамическая сборка аргументов
+          args=(-e tiles/ --force -Z"$MIN_ZOOM" -z"$MAX_ZOOM" --no-tile-size-limit --no-feature-limit --detect-longitude-wraparound --reorder --drop-densest-as-needed --extend-zooms-if-still-dropping)
+          
+          add_layer() {
+            local name="$1"
+            local file="$2"
+            if [ -f "$file" ] && [ -s "$file" ]; then
+              local count
+              count=$(python3 -c "import json; print(len(json.load(open('$file')).get('features', [])))")
+              if [ "$count" -gt 0 ]; then
+                args+=(-l "$name" "$file")
+                echo "  → Adding layer '$name' ($count features)"
+              else
+                echo "  → Skipping empty layer '$name'"
+              fi
+            else
+              echo "  → Skipping missing layer '$name'"
+            fi
+          }
+          
+          add_layer "boundaries" district.geojson
+          add_layer "transportation" region_layers/roads.geojson
+          add_layer "building" region_layers/building.geojson
+          add_layer "places" region_layers/places.geojson
+          add_layer "water" region_layers/water.geojson
+          add_layer "landuse" region_layers/landuse.geojson
+          
+          if [ ${#args[@]} -le 12 ]; then
+            echo "❌ No valid layers to process!"
+            exit 1
+          fi
+          
+          set +e
+          tippecanoe "${args[@]}" > tippecanoe.log 2>&1
+          TIPPECANOE_EXIT=$?
+          set -e
+          
+          if [ $TIPPECANOE_EXIT -ne 0 ]; then
+            echo "❌ tippecanoe failed with exit code $TIPPECANOE_EXIT"
+            echo "=== tippecanoe stdout+stderr ==="
+            cat tippecanoe.log
+            echo "=================================="
+            exit 1
+          fi
+          
+          cat tippecanoe.log
+          
+          # Проверка: подсчитаем реальное количество тайлов
+          TILE_COUNT=$(find tiles/ -type f -name '*.pbf' | wc -l)
+          echo "✅ Generated $TILE_COUNT tiles in tiles/"
+          
+          if [ "$TILE_COUNT" -eq 0 ]; then
+            echo "❌ No tiles were generated!"
+            exit 1
+          fi
+          
+          # Добавляем metadata.json если отсутствует
+          if [ ! -f tiles/metadata.json ]; then
+            echo '{}' > tiles/metadata.json
+          fi
+          
+          echo "Zoom levels found:"
+          ls tiles/ | grep -E '^[0-9]+$' | sort -n || echo "No zoom level directories found!"
+          
+          echo "Sample tiles (first 5):"
+          find tiles/ -type f -name '*.pbf' | sed -n '1,5p'
+
+      - name: Upload Tiles Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: map-tiles
+          path: tiles/
+          retention-days: 7
+
+      - name: Commit and Push Tiles
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add tiles/ || true
+          git commit -m "Update map tiles [skip ci]" || true
+          git push || true
