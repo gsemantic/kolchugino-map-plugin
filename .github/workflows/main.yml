@@ -46,23 +46,23 @@ jobs:
       - name: Download OSM Data via Overpass API
         id: download_overpass
         run: |
+          set -euo pipefail
           echo "Downloading OSM data for Vladimir Region via Overpass API..."
           
           cat > overpass-query.ql << 'QUERYEOF'
           [out:xml][timeout:300];
           (
-            // Загружаем все дороги, здания и места в области вокруг Кольчугино (центр: 56.294425, 39.375751)
             way["highway"](56.24,39.32,56.34,39.43);
             node["place"](56.24,39.32,56.34,39.43);
             way["building"](56.24,39.32,56.34,39.43);
             
-            // Загружаем административные границы всех уровней для Владимирской области
             relation["boundary"="administrative"]["admin_level"~"4|5|6|7"]["name"~"Владимир|Кольчугин"];
           );
           out body;
+          >;
+          out skel qt;
           QUERYEOF
           
-          # Retry logic for Overpass API (up to 3 attempts with delays)
           MAX_RETRIES=3
           RETRY_COUNT=0
           SUCCESS=false
@@ -78,7 +78,6 @@ jobs:
               "https://overpass-api.de/api/interpreter"
             
             if [ -f region.osm ] && [ -s region.osm ]; then
-              # Check if response contains HTML error page
               if ! head -c 200 region.osm | grep -qi "<html"; then
                 SUCCESS=true
                 echo "Download successful!"
@@ -114,10 +113,10 @@ jobs:
       - name: Extract District Boundary
         id: extract_boundary
         run: |
+          set -euo pipefail
           DISTRICT_NAME="${{ github.event.inputs.district_name || 'Кольчугинский район' }}"
           echo "Searching for boundary: $DISTRICT_NAME"
           
-          # Filter administrative boundaries
           osmium tags-filter -o boundary.osm.pbf region.osm.pbf \
             r/boundary=administrative \
             --overwrite
@@ -127,28 +126,21 @@ jobs:
             exit 1
           fi
           
-          # Convert PBF to OSM XML first
           osmium cat boundary.osm.pbf -o boundary.osm
 
-          # Создаем директорию для слоев
           mkdir -p osm_layers
 
-          # Конвертируем каждый слой OSM отдельно в GeoJSON
           for layer in points lines multilinestrings multipolygons other_relations; do
             if ogr2ogr -f GeoJSON "osm_layers/${layer}.geojson" boundary.osm "$layer" 2>/dev/null; then
               echo "Converted layer: $layer"
             fi
           done
 
-          # Объединяем все GeoJSON файлы в один
           python3 scripts/merge_layers.py
-
-          # Поиск района в GeoJSON (используем улучшенный скрипт)
           export DISTRICT_NAME="$DISTRICT_NAME" && python3 scripts/find_district_boundary.py
 
           if [ ! -f district.geojson ] || [ ! -s district.geojson ]; then
             echo "::warning::District boundary not found, using full region data"
-            # Если район не найден, используем все границы из файла
             if [ -f osm_layers/multipolygons.geojson ]; then
               cp osm_layers/multipolygons.geojson district.geojson
             elif [ -f region_combined.geojson ]; then
@@ -164,6 +156,7 @@ jobs:
       - name: Generate Map Tiles
         id: generate_tiles
         run: |
+          set -euo pipefail
           MIN_ZOOM="${{ github.event.inputs.min_zoom || 12 }}"
           MAX_ZOOM="${{ github.event.inputs.max_zoom || 18 }}"
           
@@ -171,10 +164,8 @@ jobs:
           
           mkdir -p region_layers
           
-          # Переменная для PBF файла (используем region.osm.pbf из шага загрузки)
           OSM_FILE="region.osm.pbf"
           
-          # --- ЭТАП 1: Прямая выгрузка всех слоев из PBF через ogr2ogr ---
           echo "📥 Extracting OSM layers directly from PBF..."
           
           for layer in points lines multilinestrings multipolygons other_relations; do
@@ -193,10 +184,8 @@ jobs:
             fi
           done
 
-          # --- ЭТАП 2: Фильтрация по тегам ---
           echo "✂️ Filtering features by tags..."
           
-          # Создаем скрипты для фильтрации
           cat > filter_roads.py << 'SCRIPTEOF'
           import json, os
           roads = []
@@ -273,14 +262,12 @@ jobs:
           print('  Landuse features extracted: ' + str(len(landuse)))
           SCRIPTEOF
 
-          # Запускаем скрипты фильтрации
           python3 filter_roads.py
           python3 filter_buildings.py
           python3 filter_places.py
           python3 filter_water.py
           python3 filter_landuse.py
 
-          # --- ЭТАП 3: Диагностика ---
           echo "=== Diagnostic: Final feature counts ==="
           total=0
           for f in region_layers/roads.geojson region_layers/building.geojson region_layers/places.geojson region_layers/water.geojson region_layers/landuse.geojson; do
@@ -300,28 +287,43 @@ jobs:
             exit 1
           fi
 
-          # --- ЭТАП 4: Генерация тайлов ---
           echo "🗺 Generating MBTiles with tippecanoe..."
           rm -f map.mbtiles
           
-          tippecanoe --projection=EPSG:3857 \
-            -o map.mbtiles \
-            -l boundaries district.geojson \
-            -l transportation region_layers/roads.geojson \
-            -l building region_layers/building.geojson \
-            -l places region_layers/places.geojson \
-            -l water region_layers/water.geojson \
-            -l landuse region_layers/landuse.geojson \
-            --force \
-            -Z$MIN_ZOOM -z$MAX_ZOOM \
-            --no-tile-size-limit \
-            --detect-longitude-wraparound \
-            --reorder \
-            --read-parallel \
-            -v \
-            2>&1 | tee tippecanoe.log
+          # Динамическая сборка аргументов: пропускаем пустые слои
+          args=(--projection=EPSG:3857 -o map.mbtiles --force -Z"$MIN_ZOOM" -z"$MAX_ZOOM" --no-tile-size-limit --detect-longitude-wraparound --reorder --read-parallel)
           
-          # --- ЭТАП 5: Проверка результата ---
+          add_layer() {
+            local name="$1"
+            local file="$2"
+            if [ -f "$file" ] && [ -s "$file" ]; then
+              local count
+              count=$(python3 -c "import json; print(len(json.load(open('$file')).get('features', [])))")
+              if [ "$count" -gt 0 ]; then
+                args+=(-l "$name" "$file")
+                echo "  → Adding layer '$name' ($count features)"
+              else
+                echo "  → Skipping empty layer '$name'"
+              fi
+            else
+              echo "  → Skipping missing layer '$name'"
+            fi
+          }
+          
+          add_layer "boundaries" district.geojson
+          add_layer "transportation" region_layers/roads.geojson
+          add_layer "building" region_layers/building.geojson
+          add_layer "places" region_layers/places.geojson
+          add_layer "water" region_layers/water.geojson
+          add_layer "landuse" region_layers/landuse.geojson
+          
+          if [ ${#args[@]} -le 10 ]; then
+            echo "❌ No valid layers to process!"
+            exit 1
+          fi
+          
+          tippecanoe "${args[@]}" -v 2>&1 | tee tippecanoe.log
+          
           if [ -f map.mbtiles ]; then
             SIZE=$(ls -lh map.mbtiles | awk '{print $5}')
             echo "✅ Generated map.mbtiles ($SIZE)"
@@ -333,13 +335,11 @@ jobs:
             exit 1
           fi
           
-          # --- ЭТАП 6: Извлечение в папку tiles ---
           rm -rf tiles/
           mkdir -p tiles
           echo "📂 Extracting tiles with mb-util..."
           mb-util --image_format=pbf map.mbtiles tiles/
           
-          # Добавляем metadata.json для совместимости
           if [ -f tiles/metadata.json ]; then
             echo "metadata.json exists"
           else
