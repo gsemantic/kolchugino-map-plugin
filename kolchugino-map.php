@@ -3,7 +3,7 @@
  * Plugin Name: Кольчугино — Туристическая карта
  * Plugin URI:  https://kolchugino-map.local
  * Description: Интерактивная туристическая карта Кольчугинского района с достопримечательностями, кафе, магазинами и гостиницами.
- * Version:     1.4.19
+ * Version:     1.5.1
  * Author:      Your Name
  * License:     GPL v2 or later
  * Text Domain: kolchugino-map
@@ -20,7 +20,7 @@ if ( ! defined( 'KOLCHUGINO_MAP_INITIALIZED' ) ) {
     define( 'KOLCHUGINO_MAP_INITIALIZED', true );
 
     // Константы плагина
-    define( 'KOLCHUGINO_MAP_VERSION', '1.4.19' );
+    define( 'KOLCHUGINO_MAP_VERSION', '1.5.1' );
     define( 'KOLCHUGINO_MAP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
     define( 'KOLCHUGINO_MAP_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
     define( 'KOLCHUGINO_MAP_CENTER_LAT', 56.294425 );
