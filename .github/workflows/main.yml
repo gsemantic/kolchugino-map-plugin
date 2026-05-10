@@ -239,7 +239,16 @@ jobs:
 
           echo "=== Sanitizing GeoJSON files ==="
           python3 << 'PYEOF'
-          import json, os, sys
+          import json, os
+
+          FILES = [
+              'district.geojson',
+              'region_layers/roads.geojson',
+              'region_layers/building.geojson',
+              'region_layers/places.geojson',
+              'region_layers/water.geojson',
+              'region_layers/landuse.geojson'
+          ]
 
           def sanitize(infile, outfile):
               if not os.path.exists(infile):
@@ -296,10 +305,9 @@ jobs:
               print(f"  {os.path.basename(infile)}: {len(features)} -> {len(clean)} features")
               return len(clean)
           
-          for f in sys.argv[1:]:
+          for f in FILES:
               sanitize(f, f)
           PYEOF
-          district.geojson region_layers/roads.geojson region_layers/building.geojson region_layers/places.geojson region_layers/water.geojson region_layers/landuse.geojson
 
           echo "=== Diagnostic: Final feature counts ==="
           total=0
