@@ -107,7 +107,13 @@ jobs:
           fi
           
           echo "Response size: $(du -h region.osm | cut -f1)"
-          osmium cat region.osm -o region.osm.pbf --overwrite
+          
+          # Сортируем по ID: сначала nodes, потом ways, потом relations
+          # Это обязательно для корректной работы GDAL ogr2ogr
+          osmium cat region.osm -o region_unsorted.osm.pbf --overwrite
+          osmium sort region_unsorted.osm.pbf -o region.osm.pbf --overwrite
+          rm -f region_unsorted.osm.pbf
+          
           echo "PBF size: $(du -h region.osm.pbf | cut -f1)"
 
       - name: Extract District Boundary
@@ -165,6 +171,9 @@ jobs:
           mkdir -p region_layers
           
           OSM_FILE="region.osm.pbf"
+          
+          # GDAL требует эту переменную для неотсортированных Overpass-файлов
+          export OSM_USE_CUSTOM_INDEXING=NO
           
           echo "📥 Extracting OSM layers directly from PBF..."
           
@@ -322,7 +331,21 @@ jobs:
             exit 1
           fi
           
-          tippecanoe "${args[@]}" -v 2>&1 | tee tippecanoe.log
+          # Запускаем tippecanoe с сохранением exit-кода и логов
+          set +e
+          tippecanoe "${args[@]}" -v > tippecanoe.log 2>&1
+          TIPPECANOE_EXIT=$?
+          set -e
+          
+          if [ $TIPPECANOE_EXIT -ne 0 ]; then
+            echo "❌ tippecanoe failed with exit code $TIPPECANOE_EXIT"
+            echo "=== tippecanoe stdout+stderr ==="
+            cat tippecanoe.log
+            echo "=================================="
+            exit 1
+          fi
+          
+          cat tippecanoe.log
           
           if [ -f map.mbtiles ]; then
             SIZE=$(ls -lh map.mbtiles | awk '{print $5}')
