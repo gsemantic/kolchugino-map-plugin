@@ -110,7 +110,6 @@ jobs:
           
           echo "Response size: $(du -h region.osm | cut -f1)"
           
-          # Сортируем по ID (nodes → ways → relations) — обязательно для GDAL
           osmium cat region.osm -o region_unsorted.osm.pbf --overwrite
           osmium sort region_unsorted.osm.pbf -o region.osm.pbf --overwrite
           rm -f region_unsorted.osm.pbf
@@ -315,7 +314,6 @@ jobs:
                       if not coords or len(coords) < 1:
                           continue
                   
-                  # Проверка диапазона координат
                   def check_coords(c):
                       if isinstance(c, (list, tuple)):
                           if len(c) == 2 and isinstance(c[0], (int, float)) and isinstance(c[1], (int, float)):
@@ -346,3 +344,104 @@ jobs:
 
           echo "=== Diagnostic: Final feature counts ==="
           total=0
+          for f in region_layers/roads.geojson region_layers/building.geojson region_layers/places.geojson region_layers/water.geojson region_layers/landuse.geojson; do
+            if [ -f "$f" ]; then
+              count=$(python3 -c "import json; print(len(json.load(open('$f')).get('features', [])))")
+              echo "  $f: $count features"
+              total=$((total + count))
+            else
+              echo "  $f: FILE NOT FOUND"
+            fi
+          done
+          echo "  TOTAL: $total features"
+          echo "==============================="
+
+          if [ "$total" -eq 0 ]; then
+            echo "❌ CRITICAL ERROR: No features found in any layer!"
+            exit 1
+          fi
+
+          echo "🗺 Generating tiles with tippecanoe directly to directory..."
+          rm -rf tiles/
+          
+          # Динамическая сборка аргументов
+          args=(-e tiles/ --force -Z"$MIN_ZOOM" -z"$MAX_ZOOM" --no-tile-size-limit --no-feature-limit --detect-longitude-wraparound --reorder --drop-densest-as-needed --extend-zooms-if-still-dropping)
+          
+          add_layer() {
+            local name="$1"
+            local file="$2"
+            if [ -f "$file" ] && [ -s "$file" ]; then
+              local count
+              count=$(python3 -c "import json; print(len(json.load(open('$file')).get('features', [])))")
+              if [ "$count" -gt 0 ]; then
+                args+=(-l "$name" "$file")
+                echo "  → Adding layer '$name' ($count features)"
+              else
+                echo "  → Skipping empty layer '$name'"
+              fi
+            else
+              echo "  → Skipping missing layer '$name'"
+            fi
+          }
+          
+          add_layer "boundaries" district.geojson
+          add_layer "transportation" region_layers/roads.geojson
+          add_layer "building" region_layers/building.geojson
+          add_layer "places" region_layers/places.geojson
+          add_layer "water" region_layers/water.geojson
+          add_layer "landuse" region_layers/landuse.geojson
+          
+          if [ ${#args[@]} -le 12 ]; then
+            echo "❌ No valid layers to process!"
+            exit 1
+          fi
+          
+          set +e
+          tippecanoe "${args[@]}" > tippecanoe.log 2>&1
+          TIPPECANOE_EXIT=$?
+          set -e
+          
+          if [ $TIPPECANOE_EXIT -ne 0 ]; then
+            echo "❌ tippecanoe failed with exit code $TIPPECANOE_EXIT"
+            echo "=== tippecanoe stdout+stderr ==="
+            cat tippecanoe.log
+            echo "=================================="
+            exit 1
+          fi
+          
+          cat tippecanoe.log
+          
+          # Проверка: подсчитаем реальное количество тайлов
+          TILE_COUNT=$(find tiles/ -type f -name '*.pbf' | wc -l)
+          echo "✅ Generated $TILE_COUNT tiles in tiles/"
+          
+          if [ "$TILE_COUNT" -eq 0 ]; then
+            echo "❌ No tiles were generated!"
+            exit 1
+          fi
+          
+          # Добавляем metadata.json если отсутствует
+          if [ ! -f tiles/metadata.json ]; then
+            echo '{}' > tiles/metadata.json
+          fi
+          
+          echo "Zoom levels found:"
+          ls tiles/ | grep -E '^[0-9]+$' | sort -n || echo "No zoom level directories found!"
+          
+          echo "Sample tiles:"
+          find tiles/ -type f -name '*.pbf' | head -5
+
+      - name: Upload Tiles Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: map-tiles
+          path: tiles/
+          retention-days: 7
+
+      - name: Commit and Push Tiles
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add tiles/ || true
+          git commit -m "Update map tiles [skip ci]" || true
+          git push || true
