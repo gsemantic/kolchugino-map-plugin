@@ -192,7 +192,6 @@ jobs:
 
           echo "✂️ Filtering features by tags..."
           
-          # Один Python-скрипт вместо 5 heredoc'ов — надёжнее
           python3 << 'PYEOF'
           import json, os
 
@@ -210,22 +209,18 @@ jobs:
                   json.dump({'type': 'FeatureCollection', 'features': features}, f)
               print(f'  {name}: {len(features)} features')
 
-          # Roads
           roads = [f for f in load_features('region_layers/lines.geojson', 'region_layers/multilinestrings.geojson')
                    if 'highway' in f.get('properties', {})]
           save('roads', roads)
 
-          # Buildings
           buildings = [f for f in load_features('region_layers/multipolygons.geojson', 'region_layers/other_relations.geojson')
                        if 'building' in f.get('properties', {})]
           save('building', buildings)
 
-          # Places
           places = [f for f in load_features('region_layers/points.geojson')
                     if 'place' in f.get('properties', {})]
           save('places', places)
 
-          # Water
           water = []
           for f in load_features('region_layers/lines.geojson', 'region_layers/multilinestrings.geojson',
                                  'region_layers/multipolygons.geojson', 'region_layers/other_relations.geojson'):
@@ -234,7 +229,6 @@ jobs:
                   water.append(f)
           save('water', water)
 
-          # Landuse
           landuse = []
           for f in load_features('region_layers/multipolygons.geojson', 'region_layers/other_relations.geojson'):
               props = f.get('properties', {})
@@ -304,7 +298,8 @@ jobs:
           
           for f in sys.argv[1:]:
               sanitize(f, f)
-          PYEOF district.geojson region_layers/roads.geojson region_layers/building.geojson region_layers/places.geojson region_layers/water.geojson region_layers/landuse.geojson
+          PYEOF
+          district.geojson region_layers/roads.geojson region_layers/building.geojson region_layers/places.geojson region_layers/water.geojson region_layers/landuse.geojson
 
           echo "=== Diagnostic: Final feature counts ==="
           total=0
@@ -328,7 +323,6 @@ jobs:
           echo "🗺 Generating tiles with tippecanoe directly to directory..."
           rm -rf tiles/
           
-          # Динамическая сборка аргументов
           args=(-e tiles/ --force -Z"$MIN_ZOOM" -z"$MAX_ZOOM" --no-tile-size-limit --no-feature-limit --detect-longitude-wraparound --reorder --drop-densest-as-needed --extend-zooms-if-still-dropping)
           
           add_layer() {
@@ -375,7 +369,6 @@ jobs:
           
           cat tippecanoe.log
           
-          # Проверка: подсчитаем реальное количество тайлов
           TILE_COUNT=$(find tiles/ -type f -name '*.pbf' | wc -l)
           echo "✅ Generated $TILE_COUNT tiles in tiles/"
           
@@ -384,7 +377,6 @@ jobs:
             exit 1
           fi
           
-          # Добавляем metadata.json если отсутствует
           if [ ! -f tiles/metadata.json ]; then
             echo '{}' > tiles/metadata.json
           fi
