@@ -53,14 +53,16 @@ jobs:
           [out:xml][timeout:300];
           (
             way["highway"](56.24,39.32,56.34,39.43);
-            node["place"](56.24,39.32,56.34,39.43);
             way["building"](56.24,39.32,56.34,39.43);
-            
             relation["boundary"="administrative"]["admin_level"~"4|5|6|7"]["name"~"Владимир|Кольчугин"];
           );
           out body;
           >;
           out skel qt;
+          (
+            node["place"](56.24,39.32,56.34,39.43);
+          );
+          out body;
           QUERYEOF
           
           MAX_RETRIES=3
@@ -108,8 +110,7 @@ jobs:
           
           echo "Response size: $(du -h region.osm | cut -f1)"
           
-          # Сортируем по ID: сначала nodes, потом ways, потом relations
-          # Это обязательно для корректной работы GDAL ogr2ogr
+          # Сортируем по ID (nodes → ways → relations) — обязательно для GDAL
           osmium cat region.osm -o region_unsorted.osm.pbf --overwrite
           osmium sort region_unsorted.osm.pbf -o region.osm.pbf --overwrite
           rm -f region_unsorted.osm.pbf
@@ -171,9 +172,6 @@ jobs:
           mkdir -p region_layers
           
           OSM_FILE="region.osm.pbf"
-          
-          # GDAL требует эту переменную для неотсортированных Overpass-файлов
-          export OSM_USE_CUSTOM_INDEXING=NO
           
           echo "📥 Extracting OSM layers directly from PBF..."
           
@@ -277,6 +275,75 @@ jobs:
           python3 filter_water.py
           python3 filter_landuse.py
 
+          echo "=== Sanitizing GeoJSON files ==="
+          cat > sanitize_geojson.py << 'PYEOF'
+          import json, sys, os
+
+          def sanitize(infile, outfile):
+              if not os.path.exists(infile):
+                  print(f"  File not found: {infile}")
+                  return 0
+              with open(infile) as f:
+                  try:
+                      data = json.load(f)
+                  except json.JSONDecodeError as e:
+                      print(f"  Invalid JSON in {infile}: {e}")
+                      return 0
+              
+              features = data.get('features', [])
+              clean = []
+              
+              for feat in features:
+                  geom = feat.get('geometry')
+                  if geom is None:
+                      continue
+                  coords = geom.get('coordinates')
+                  if coords is None:
+                      continue
+                  
+                  gtype = geom.get('type', '')
+                  if gtype == 'Point':
+                      if not coords or len(coords) < 2:
+                          continue
+                  elif gtype in ('LineString', 'MultiPoint'):
+                      if not coords or len(coords) < 1:
+                          continue
+                  elif gtype in ('Polygon', 'MultiLineString'):
+                      if not coords or len(coords) < 1:
+                          continue
+                  elif gtype in ('MultiPolygon', 'GeometryCollection'):
+                      if not coords or len(coords) < 1:
+                          continue
+                  
+                  # Проверка диапазона координат
+                  def check_coords(c):
+                      if isinstance(c, (list, tuple)):
+                          if len(c) == 2 and isinstance(c[0], (int, float)) and isinstance(c[1], (int, float)):
+                              lon, lat = c
+                              return -180 <= lon <= 180 and -90 <= lat <= 90
+                          return all(check_coords(x) for x in c)
+                      return True
+                  
+                  if not check_coords(coords):
+                      continue
+                  
+                  clean.append(feat)
+              
+              data['features'] = clean
+              with open(outfile, 'w') as f:
+                  json.dump(data, f)
+              print(f"  {os.path.basename(infile)}: {len(features)} -> {len(clean)} features")
+              return len(clean)
+          
+          if __name__ == '__main__':
+              for f in sys.argv[1:]:
+                  sanitize(f, f)
+          PYEOF
+
+          for f in district.geojson region_layers/roads.geojson region_layers/building.geojson region_layers/places.geojson region_layers/water.geojson region_layers/landuse.geojson; do
+              python3 sanitize_geojson.py "$f"
+          done
+
           echo "=== Diagnostic: Final feature counts ==="
           total=0
           for f in region_layers/roads.geojson region_layers/building.geojson region_layers/places.geojson region_layers/water.geojson region_layers/landuse.geojson; do
@@ -300,7 +367,8 @@ jobs:
           rm -f map.mbtiles
           
           # Динамическая сборка аргументов: пропускаем пустые слои
-          args=(--projection=EPSG:3857 -o map.mbtiles --force -Z"$MIN_ZOOM" -z"$MAX_ZOOM" --no-tile-size-limit --detect-longitude-wraparound --reorder --read-parallel)
+          # УБРАН --projection=EPSG:3857 — это не флаг tippecanoe!
+          args=(-o map.mbtiles --force -Z"$MIN_ZOOM" -z"$MAX_ZOOM" --no-tile-size-limit --no-feature-limit --detect-longitude-wraparound --reorder --drop-densest-as-needed --extend-zooms-if-still-dropping)
           
           add_layer() {
             local name="$1"
@@ -326,14 +394,14 @@ jobs:
           add_layer "water" region_layers/water.geojson
           add_layer "landuse" region_layers/landuse.geojson
           
-          if [ ${#args[@]} -le 10 ]; then
+          if [ ${#args[@]} -le 12 ]; then
             echo "❌ No valid layers to process!"
             exit 1
           fi
           
           # Запускаем tippecanoe с сохранением exit-кода и логов
           set +e
-          tippecanoe "${args[@]}" -v > tippecanoe.log 2>&1
+          tippecanoe "${args[@]}" > tippecanoe.log 2>&1
           TIPPECANOE_EXIT=$?
           set -e
           
